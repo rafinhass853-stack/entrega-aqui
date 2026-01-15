@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { auth } from './firebase';
 import { signOut } from 'firebase/auth';
+import Cardapio from './Cardapio';
 
-// 1. Estilos Globais para garantir que o fundo branco desapareça de vez
+// 1. Estilos Globais
 const GlobalStyles = () => (
   <style>{`
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -18,8 +19,8 @@ const GlobalStyles = () => (
   `}</style>
 );
 
-// Componente de Layout ajustado
-const Layout = ({ children, isMobile }) => {
+// 2. Componente de Layout (EXPORTADO para que outros arquivos como Cardapio.jsx funcionem)
+export const Layout = ({ children, isMobile }) => {
   return (
     <div style={{ 
       display: 'flex', 
@@ -45,19 +46,16 @@ const Layout = ({ children, isMobile }) => {
   );
 };
 
-// Componente de Menu
+// 3. Componente de Menu Lateral
 const MenuComponent = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const [isMobile, setIsMobile] = useState(false);
+  const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
   const [menuOpen, setMenuOpen] = useState(false);
   const [pedidosPendentes] = useState(5);
 
   useEffect(() => {
-    const checkMobile = () => {
-      setIsMobile(window.innerWidth <= 768);
-    };
-    checkMobile();
+    const checkMobile = () => setIsMobile(window.innerWidth <= 768);
     window.addEventListener('resize', checkMobile);
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
@@ -102,118 +100,61 @@ const MenuComponent = () => {
       flexDirection: 'column',
       padding: isMobile ? (menuOpen ? '16px' : '0') : '16px',
       position: 'fixed',
-      left: 0,
-      top: 0,
-      zIndex: 1000,
+      left: 0, top: 0, zIndex: 1000,
       overflowY: 'auto',
       transition: 'all 0.3s ease',
       boxShadow: isMobile && menuOpen ? '0 0 40px rgba(0, 30, 35, 0.9)' : '2px 0 10px rgba(0, 0, 0, 0.3)',
     },
     overlay: {
       display: isMobile && menuOpen ? 'block' : 'none',
-      position: 'fixed',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      backgroundColor: 'rgba(0, 10, 15, 0.7)',
-      zIndex: 999,
-      backdropFilter: 'blur(3px)',
+      position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+      backgroundColor: 'rgba(0, 10, 15, 0.7)', zIndex: 999, backdropFilter: 'blur(3px)',
     },
     mobileMenuButton: {
-      position: 'fixed',
-      top: '16px',
-      left: '16px',
-      zIndex: 1001,
-      backgroundColor: '#002228',
-      border: '1px solid rgba(79, 209, 197, 0.25)',
-      borderRadius: '10px',
-      padding: '12px',
-      color: '#4FD1C5',
-      cursor: 'pointer',
-      display: isMobile ? 'flex' : 'none',
-      alignItems: 'center',
-      justifyContent: 'center',
-      fontSize: '20px',
+      position: 'fixed', top: '16px', left: '16px', zIndex: 1001,
+      backgroundColor: '#002228', border: '1px solid rgba(79, 209, 197, 0.25)',
+      borderRadius: '10px', padding: '12px', color: '#4FD1C5',
+      cursor: 'pointer', display: isMobile ? 'flex' : 'none', alignItems: 'center', justifyContent: 'center', fontSize: '20px',
     },
     logoSection: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '12px',
-      marginBottom: '25px',
-      padding: '12px',
-      borderRadius: '10px',
-      backgroundColor: 'rgba(79, 209, 197, 0.05)',
-      opacity: isMobile && !menuOpen ? 0 : 1,
+      display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '25px', padding: '12px',
+      borderRadius: '10px', backgroundColor: 'rgba(79, 209, 197, 0.05)',
     },
-    logoIcon: { fontSize: '26px' },
     brandName: { color: '#4FD1C5', fontSize: '18px', fontWeight: '800' },
     brandSubtitle: { color: '#81E6D9', fontSize: '11px', opacity: 0.7 },
     quickActionsSection: {
-      marginBottom: '20px',
-      padding: '12px',
-      backgroundColor: 'rgba(79, 209, 197, 0.03)',
-      borderRadius: '10px',
-      border: '1px solid rgba(79, 209, 197, 0.08)',
+      marginBottom: '20px', padding: '12px', backgroundColor: 'rgba(79, 209, 197, 0.03)',
+      borderRadius: '10px', border: '1px solid rgba(79, 209, 197, 0.08)',
     },
     sectionTitle: { color: '#4FD1C5', fontSize: '12px', fontWeight: '700', marginBottom: '10px', textTransform: 'uppercase' },
     quickActionsGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px' },
     quickActionButton: {
-      backgroundColor: 'rgba(79, 209, 197, 0.08)',
-      border: '1px solid rgba(79, 209, 197, 0.15)',
-      borderRadius: '8px',
-      padding: '8px 4px',
-      fontSize: '11px',
-      color: '#81E6D9',
-      cursor: 'pointer',
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      gap: '4px',
+      backgroundColor: 'rgba(79, 209, 197, 0.08)', border: '1px solid rgba(79, 209, 197, 0.15)',
+      borderRadius: '8px', padding: '8px 4px', fontSize: '11px', color: '#81E6D9',
+      cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px',
     },
     nav: { display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 },
-    menuItem: (isActive, hasBadge, isPremium) => ({
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      gap: '10px',
-      padding: '12px 14px',
-      borderRadius: '8px',
+    menuItem: (isActive, isPremium) => ({
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px',
+      padding: '12px 14px', borderRadius: '8px',
       color: isActive ? '#00171A' : (isPremium ? '#F6E05E' : '#A0AEC0'),
       backgroundColor: isActive ? '#4FD1C5' : 'transparent',
-      textDecoration: 'none',
-      fontSize: '14px',
-      fontWeight: isActive ? '700' : '600',
-      cursor: 'pointer',
-      border: isPremium && !isActive ? '1px solid rgba(246, 224, 94, 0.25)' : 'none',
-      width: '100%',
-      textAlign: 'left',
-      opacity: isMobile && !menuOpen ? 0 : 1,
+      textDecoration: 'none', fontSize: '14px', fontWeight: isActive ? '700' : '600',
+      cursor: 'pointer', border: isPremium && !isActive ? '1px solid rgba(246, 224, 94, 0.25)' : 'none',
+      width: '100%', textAlign: 'left',
     }),
     badge: {
-      backgroundColor: '#F56565',
-      color: 'white',
-      fontSize: '10px',
-      borderRadius: '50%',
-      width: '18px',
-      height: '18px',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
+      backgroundColor: '#F56565', color: 'white', fontSize: '10px', borderRadius: '50%',
+      width: '18px', height: '18px', display: 'flex', alignItems: 'center', justifyContent: 'center',
     },
     premiumBadge: {
-      backgroundColor: 'rgba(246, 224, 94, 0.15)',
-      color: '#F6E05E',
-      fontSize: '9px',
-      padding: '2px 5px',
-      borderRadius: '4px',
-      marginLeft: '6px',
+      backgroundColor: 'rgba(246, 224, 94, 0.15)', color: '#F6E05E', fontSize: '9px',
+      padding: '2px 5px', borderRadius: '4px', marginLeft: '6px',
     },
     footer: { marginTop: 'auto', paddingTop: '16px', borderTop: '1px solid rgba(79, 209, 197, 0.08)' },
     userInfo: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px', padding: '10px', backgroundColor: 'rgba(79, 209, 197, 0.03)', borderRadius: '8px' },
     userAvatar: { width: '36px', height: '36px', borderRadius: '50%', backgroundColor: 'rgba(79, 209, 197, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#4FD1C5', fontWeight: '700' },
     userName: { color: '#81E6D9', fontWeight: '600', fontSize: '13px' },
-    userEmail: { color: '#81E6D9', fontSize: '11px', opacity: 0.7 },
     logoutButton: {
       display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', padding: '12px', borderRadius: '8px', color: '#FEB2B2', backgroundColor: 'rgba(254, 178, 178, 0.08)', border: '1px solid rgba(254, 178, 178, 0.15)', cursor: 'pointer', width: '100%',
     }
@@ -231,9 +172,9 @@ const MenuComponent = () => {
       
       <div style={styles.sidebar}>
         <div style={styles.logoSection}>
-          <span style={styles.logoIcon}>🏪</span>
+          <span style={{ fontSize: '26px' }}>🏪</span>
           <div>
-            <div style={styles.brandName}>ENTREGAGUI PRO</div>
+            <div style={styles.brandName}>ENTREGAQUI</div>
             <div style={styles.brandSubtitle}>Painel do Estabelecimento</div>
           </div>
         </div>
@@ -257,7 +198,7 @@ const MenuComponent = () => {
               <button
                 key={item.id}
                 onClick={() => { navigate(item.path); if (isMobile) setMenuOpen(false); }}
-                style={styles.menuItem(isActive, item.badge, item.premium)}
+                style={styles.menuItem(isActive, item.premium)}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: 1 }}>
                   <span>{item.icon}</span>
@@ -284,7 +225,7 @@ const MenuComponent = () => {
   );
 };
 
-// Páginas
+// 4. Páginas e Métricas
 const Dashboard = ({ user, isMobile }) => (
   <Layout isMobile={isMobile}>
     <div style={pageStyles.container}>
@@ -295,7 +236,6 @@ const Dashboard = ({ user, isMobile }) => (
         </div>
         <div style={pageStyles.dateBadge}>📅 {new Date().toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}</div>
       </div>
-      
       <div style={pageStyles.cardsGrid}>
         <MetricCard title="Faturamento Mensal" value="R$ 5.280,00" trend="↑ 12%" icon="📊" />
         <MetricCard title="Pedidos Hoje" value="24" trend="↑ 15%" icon="🛍️" />
@@ -317,7 +257,6 @@ const MetricCard = ({ title, value, trend, icon }) => (
   </div>
 );
 
-// Estilos das páginas
 const pageStyles = {
   container: { maxWidth: '1200px', margin: '0 auto', width: '100%' },
   headerSection: { display: 'flex', justifyContent: 'space-between', marginBottom: '30px', paddingBottom: '20px', borderBottom: '1px solid rgba(79, 209, 197, 0.08)' },
@@ -331,7 +270,7 @@ const pageStyles = {
   cardTrend: { fontSize: '13px', color: '#A0AEC0' },
 };
 
-// Componente Root
+// 5. Componente Root
 const Menu = () => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -348,17 +287,18 @@ const Menu = () => {
     <div style={{ display: 'flex', height: '100vh', backgroundColor: '#00171A', justifyContent: 'center', alignItems: 'center', color: '#4FD1C5', flexDirection: 'column', gap: '20px' }}>
       <GlobalStyles />
       <div style={{ width: '50px', height: '50px', border: '3px solid #002228', borderTopColor: '#4FD1C5', borderRadius: '50%', animation: 'spin 1s linear infinite' }}></div>
-      <p>Carregando ENTREGAGUI...</p>
+      <p>Carregando ENTREGAQUI...</p>
     </div>
   );
 
   return (
     <Router>
+      <GlobalStyles />
       <Routes>
-        <Route path="/" element={<Navigate to={user ? "/dashboard" : "/login"} />} />
-        <Route path="/login" element={!user ? <div style={{color: 'white', padding: '20px'}}>Tela de Login (Implementar)</div> : <Navigate to="/dashboard" />} />
+        <Route path="/cardapio" element={user ? <Cardapio isMobile={isMobile} /> : <Navigate to="/login" />} />
         <Route path="/dashboard" element={user ? <Dashboard user={user} isMobile={isMobile} /> : <Navigate to="/login" />} />
-        {/* Adicione as outras rotas conforme necessário */}
+        <Route path="/login" element={!user ? <div style={{color: 'white', padding: '20px'}}>Tela de Login (Implementar)</div> : <Navigate to="/dashboard" />} />
+        <Route path="/" element={<Navigate to={user ? "/dashboard" : "/login"} />} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </Router>

@@ -1,8 +1,8 @@
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
-import { getAnalytics } from "firebase/analytics";
+import { getFirestore } from "firebase/firestore";
+import { getStorage } from "firebase/storage"; // 1. Adicione esta importação
 
-// Configurações do seu projeto Firebase
 const firebaseConfig = {
   apiKey: "AIzaSyB4JpvdR9d0JuBv3cc1DoLeCkftl1Us57k",
   authDomain: "entregaqui-54665.firebaseapp.com",
@@ -13,10 +13,8 @@ const firebaseConfig = {
   measurementId: "G-B7SL3MSRYW"
 };
 
-// Inicializa o Firebase
 const app = initializeApp(firebaseConfig);
-const analytics = getAnalytics(app);
-
-// Exporta o serviço de Auth para ser usado nos componentes
 export const auth = getAuth(app);
+export const db = getFirestore(app);
+export const storage = getStorage(app); // 2. Exporte o storage
 export default app;
