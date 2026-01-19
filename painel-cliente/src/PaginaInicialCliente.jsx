@@ -1,15 +1,22 @@
 import React, { useEffect, useState } from 'react';
 import { db } from './firebase';
-import { collection, onSnapshot, query, where, orderBy, getDocs } from 'firebase/firestore';
+import { collection, onSnapshot, query, getDocs } from 'firebase/firestore';
 import { 
-  Search, Star, ChevronRight, ArrowLeft, MapPin, Clock, 
-  Bike, Filter, X, Check, Sliders, Navigation, Tag
+  Search, Star, ChevronRight, MapPin, Clock, 
+  Bike, Filter, X, Check, Navigation, Tag
 } from 'lucide-react';
 
+// Importar os componentes criados
+import Cardapio from './Cardapio';
+import Carrinho from './Carrinho';
+import Cadastro from './Cadastro';
+import EnviarPedido from './EnviarPedido';
+
 const PaginaInicialCliente = () => {
+  // Estados para gerenciar as telas
+  const [telaAtual, setTelaAtual] = useState('home');
   const [estabelecimentos, setEstabelecimentos] = useState([]);
   const [estabelecimentoSelecionado, setEstabelecimentoSelecionado] = useState(null);
-  const [cardapio, setCardapio] = useState([]);
   const [pesquisa, setPesquisa] = useState('');
   const [cidade, setCidade] = useState('Araraquara');
   const [filtrosAbertos, setFiltrosAbertos] = useState(false);
@@ -19,6 +26,10 @@ const PaginaInicialCliente = () => {
   const [filtroAbertos, setFiltroAbertos] = useState(false);
   const [raioKm, setRaioKm] = useState(5);
   const [loading, setLoading] = useState(true);
+  
+  // Estados para o fluxo do pedido
+  const [carrinho, setCarrinho] = useState([]);
+  const [dadosCliente, setDadosCliente] = useState(null);
 
   const categorias = [
     { id: 'lanches', nome: '🍔 Lanches' },
@@ -31,7 +42,7 @@ const PaginaInicialCliente = () => {
     { id: 'doces', nome: '🍰 Doces' }
   ];
 
-  // Busca estabelecimentos do Firebase
+  // Busca estabelecimentos do Firebase - CORRIGIDA
   useEffect(() => {
     const fetchEstabelecimentos = async () => {
       try {
@@ -41,24 +52,77 @@ const PaginaInicialCliente = () => {
         const estabelecimentosRef = collection(db, 'estabelecimentos');
         const q = query(estabelecimentosRef);
         
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-          const lista = snapshot.docs.map(doc => {
+        const unsubscribe = onSnapshot(q, async (snapshot) => {
+          const listaPromises = snapshot.docs.map(async (doc) => {
             const data = doc.data();
             console.log('Documento encontrado:', doc.id, data);
+            
+            // Buscar horário de funcionamento da subcoleção
+            let horarioFuncionamento = null;
+            let abertoAgora = false;
+            
+            try {
+              const horarioRef = collection(db, 'estabelecimentos', doc.id, 'horarios');
+              const horarioSnapshot = await getDocs(horarioRef);
+              
+              if (!horarioSnapshot.empty) {
+                horarioFuncionamento = horarioSnapshot.docs[0].data();
+                // Calcular se está aberto agora baseado no horário
+                abertoAgora = verificarSeEstaAberto(horarioFuncionamento);
+              }
+            } catch (error) {
+              console.log('Erro ao buscar horário:', error);
+            }
+            
+            // Buscar cardápio para contar itens
+            let quantidadeItensCardapio = 0;
+            try {
+              const cardapioRef = collection(db, 'estabelecimentos', doc.id, 'cardapio');
+              const cardapioSnapshot = await getDocs(cardapioRef);
+              quantidadeItensCardapio = cardapioSnapshot.size;
+            } catch (error) {
+              console.log('Erro ao contar itens do cardápio:', error);
+            }
+            
+            // Verificar se tem foto no Firebase Storage
+            const temFoto = data.fotoUrl || data.imagem || data.logo;
             
             return {
               id: doc.id,
               ...data,
-              // Adiciona dados mockados para campos que podem não existir no Firebase ainda
+              // Dados do endereço do seu Firebase
+              endereco: {
+                bairro: data.bairro || 'Vila Santana',
+                cep: data.cep || '14801204',
+                cepFormatado: data.cepFormatado || '14.801-204',
+                cidade: data.cidade || 'Araraquara',
+                complemento: data.complemento || '',
+                completo: data.completo || 'Avenida Bandeirantes, 1981 - Vila Santana, Araraquara - SP, 14.801-204',
+                numero: data.numero || '1981',
+                rua: data.rua || 'Avenida Bandeirantes',
+                uf: data.uf || 'SP'
+              },
+              // Informações do estabelecimento
+              cliente: data.cliente || data.nome || data.nomeEstabelecimento || 'Estabelecimento',
+              categoria: data.categoria || data.tipo || 'lanches',
+              // Status e horário
+              horarioFuncionamento,
+              aberto: abertoAgora,
+              // Dados de entrega (usar valores padrão se não existirem)
               distancia: data.distancia || Math.floor(Math.random() * 10) + 1,
               tempoEntrega: data.tempoEntrega || Math.floor(Math.random() * 30) + 15,
               taxaEntrega: data.taxaEntrega !== undefined ? data.taxaEntrega : (Math.random() > 0.5 ? 0 : (Math.random() * 10).toFixed(2)),
-              aberto: data.aberto !== undefined ? data.aberto : Math.random() > 0.2,
-              categoria: data.categoria || 'lanches'
+              // Avaliações
+              avaliacao: data.avaliacao || data.rating || 4.9,
+              numAvaliacoes: data.numAvaliacoes || data.totalAvaliacoes || 150,
+              // Informações adicionais
+              fotoUrl: temFoto,
+              quantidadeItensCardapio
             };
           });
           
-          console.log('Estabelecimentos carregados:', lista.length);
+          const lista = await Promise.all(listaPromises);
+          console.log('Estabelecimentos carregados:', lista);
           setEstabelecimentos(lista);
           setLoading(false);
         }, (error) => {
@@ -76,38 +140,91 @@ const PaginaInicialCliente = () => {
     fetchEstabelecimentos();
   }, []);
 
-  // Busca cardápio do estabelecimento selecionado
-  useEffect(() => {
-    if (!estabelecimentoSelecionado) return;
+  // Função para verificar se o estabelecimento está aberto
+  const verificarSeEstaAberto = (horario) => {
+    if (!horario) return true; // Se não tem horário, assume que está aberto
+    
+    const agora = new Date();
+    const horaAtual = agora.getHours();
+    const minutosAtual = agora.getMinutes();
+    const totalMinutosAtual = horaAtual * 60 + minutosAtual;
+    
+    // Converter horários do Firebase
+    const horarioAbertura = converterHorarioParaMinutos(horario.abertura);
+    const horarioFechamento = converterHorarioParaMinutos(horario.fechamento);
+    
+    // Verificar se está dentro do horário
+    return totalMinutosAtual >= horarioAbertura && totalMinutosAtual <= horarioFechamento;
+  };
 
-    const fetchCardapio = async () => {
-      try {
-        console.log('Buscando cardápio para:', estabelecimentoSelecionado.id);
-        
-        // Referência à subcoleção cardapio do estabelecimento
-        const cardapioRef = collection(db, 'estabelecimentos', estabelecimentoSelecionado.id, 'cardapio');
-        const q = query(cardapioRef);
-        
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-          const cardapioData = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-          }));
-          
-          console.log('Cardápio carregado:', cardapioData.length, 'itens');
-          setCardapio(cardapioData);
-        }, (error) => {
-          console.error('Erro ao buscar cardápio:', error);
-        });
+  const converterHorarioParaMinutos = (horario) => {
+    if (!horario) return 8 * 60; // 08:00 padrão
+    
+    // Formato pode ser "08:00" ou objeto com horas/minutos
+    if (typeof horario === 'string') {
+      const [horas, minutos] = horario.split(':').map(Number);
+      return horas * 60 + minutos;
+    } else if (horario.horas && horario.minutos) {
+      return horario.horas * 60 + horario.minutos;
+    }
+    
+    return 8 * 60; // Padrão
+  };
 
-        return () => unsubscribe();
-      } catch (error) {
-        console.error('Erro ao buscar cardápio:', error);
-      }
-    };
+  // Funções para gerenciar o fluxo
+  const handleSelecionarEstabelecimento = (estabelecimento) => {
+    setEstabelecimentoSelecionado(estabelecimento);
+    setTelaAtual('cardapio');
+    // Limpar carrinho quando muda de estabelecimento
+    setCarrinho([]);
+  };
 
-    fetchCardapio();
-  }, [estabelecimentoSelecionado]);
+  const handleVoltarHome = () => {
+    setTelaAtual('home');
+    setEstabelecimentoSelecionado(null);
+  };
+
+  const handleAbrirCarrinho = (novoCarrinho) => {
+    if (novoCarrinho) {
+      setCarrinho(novoCarrinho);
+    }
+    setTelaAtual('carrinho');
+  };
+
+  const handleAtualizarCarrinho = (acao, dados) => {
+    switch (acao) {
+      case 'atualizarQuantidade':
+        setCarrinho(carrinho.map(item => 
+          item.id === dados.itemId ? { ...item, quantidade: dados.quantidade } : item
+        ));
+        break;
+      case 'removerItem':
+        setCarrinho(carrinho.filter(item => item.id !== dados.itemId));
+        break;
+      case 'continuar':
+        setTelaAtual('cadastro');
+        break;
+      default:
+        console.warn('Ação desconhecida:', acao);
+    }
+  };
+
+  const handleFinalizarCadastro = (dados) => {
+    setDadosCliente(dados);
+    setTelaAtual('enviar');
+  };
+
+  const handleEnviarPedido = (pedido) => {
+    console.log('Pedido enviado:', pedido);
+    // Aqui você pode salvar o pedido no Firebase
+    // Exemplo: await addDoc(collection(db, 'pedidos'), pedido);
+    // Após enviar, voltar para home
+    setTelaAtual('home');
+    setEstabelecimentoSelecionado(null);
+    setCarrinho([]);
+    setDadosCliente(null);
+    alert(`Pedido #${pedido.numero} realizado com sucesso!`);
+  };
 
   // Filtra estabelecimentos
   const estabelecimentosFiltrados = estabelecimentos.filter(est => {
@@ -138,7 +255,7 @@ const PaginaInicialCliente = () => {
       return false;
     }
 
-    // Filtro por distância (mockado para agora)
+    // Filtro por distância
     if (est.distancia > raioKm) {
       return false;
     }
@@ -158,321 +275,336 @@ const PaginaInicialCliente = () => {
       case 'mais-rapido':
         return a.tempoEntrega - b.tempoEntrega;
       case 'melhor-avaliacao':
-        return 4.9 - 4.9; // Mock - implementar avaliações reais
+        return b.avaliacao - a.avaliacao;
       default:
         return 0;
     }
   });
 
-  // Tela de cardápio
-  if (estabelecimentoSelecionado) {
+  // Renderizar a tela atual
+  switch (telaAtual) {
+    case 'cardapio':
+      return (
+        <Cardapio
+          estabelecimento={estabelecimentoSelecionado}
+          onVoltar={handleVoltarHome}
+          onAbrirCarrinho={handleAbrirCarrinho}
+        />
+      );
+    
+    case 'carrinho':
+      return (
+        <Carrinho
+          carrinho={carrinho}
+          estabelecimento={estabelecimentoSelecionado}
+          onVoltar={() => setTelaAtual('cardapio')}
+          onContinuar={handleAtualizarCarrinho}
+        />
+      );
+    
+    case 'cadastro':
+      return (
+        <Cadastro
+          dadosCliente={dadosCliente}
+          onVoltar={() => setTelaAtual('carrinho')}
+          onContinuar={handleFinalizarCadastro}
+        />
+      );
+    
+    case 'enviar':
+      return (
+        <EnviarPedido
+          estabelecimento={estabelecimentoSelecionado}
+          carrinho={carrinho}
+          dadosCliente={dadosCliente}
+          onVoltar={() => setTelaAtual('cadastro')}
+          onEnviarPedido={handleEnviarPedido}
+        />
+      );
+    
+    case 'home':
+    default:
+      return renderTelaHome();
+  }
+
+  // Função para renderizar a tela home
+  function renderTelaHome() {
     return (
       <div style={styles.container}>
-        <header style={styles.headerSimples}>
-          <button onClick={() => setEstabelecimentoSelecionado(null)} style={styles.btnBack}>
-            <ArrowLeft size={24} color="#ffffff" />
-          </button>
-          <h2 style={styles.titleNav}>{estabelecimentoSelecionado.cliente}</h2>
+        {/* Header */}
+        <header style={styles.header}>
+          <div style={styles.headerTop}>
+            <h1 style={styles.logo}>
+              <span style={styles.logoBlue}>Entrega</span>
+              <span style={styles.logoGreen}>Aqui</span>
+            </h1>
+            
+            <div style={styles.locationSelector}>
+              <MapPin size={18} color="#10B981" />
+              <select 
+                value={cidade} 
+                onChange={(e) => setCidade(e.target.value)}
+                style={styles.selectCity}
+              >
+                <option value="Araraquara">Araraquara, SP</option>
+                <option value="São Carlos">São Carlos, SP</option>
+                <option value="Ribeirão Preto">Ribeirão Preto, SP</option>
+                <option value="Campinas">Campinas, SP</option>
+              </select>
+            </div>
+          </div>
+
+          <div style={styles.searchContainer}>
+            <Search size={20} color="#10B981" />
+            <input 
+              type="text" 
+              placeholder="Buscar estabelecimentos, lanches, japonesa..."
+              style={styles.searchInput}
+              value={pesquisa}
+              onChange={(e) => setPesquisa(e.target.value)}
+            />
+            <button 
+              onClick={() => setFiltrosAbertos(!filtrosAbertos)}
+              style={styles.filterButton}
+            >
+              <Filter size={20} color="#ffffff" />
+            </button>
+          </div>
+
+          {/* Categorias */}
+          <div style={styles.categoriesContainer}>
+            {categorias.map(cat => (
+              <button
+                key={cat.id}
+                onClick={() => {
+                  if (categoriasAtivas.includes(cat.id)) {
+                    setCategoriasAtivas(categoriasAtivas.filter(c => c !== cat.id));
+                  } else {
+                    setCategoriasAtivas([...categoriasAtivas, cat.id]);
+                  }
+                }}
+                style={{
+                  ...styles.categoryButton,
+                  backgroundColor: categoriasAtivas.includes(cat.id) ? '#10B981' : '#0F3460'
+                }}
+              >
+                {cat.nome}
+                {categoriasAtivas.includes(cat.id) && <Check size={14} style={{ marginLeft: '5px' }} />}
+              </button>
+            ))}
+          </div>
         </header>
 
-        <main style={styles.content}>
-          <div style={styles.storeHero}>
-            <h1 style={styles.storeName}>{estabelecimentoSelecionado.cliente}</h1>
-            <div style={styles.storeBadges}>
-              {estabelecimentoSelecionado.aberto ? (
-                <span style={styles.badgeAberto}>Aberto agora</span>
-              ) : (
-                <span style={styles.badgeFechado}>Fechado</span>
-              )}
-              <span style={styles.badge}>⭐ {estabelecimentoSelecionado.avaliacao || 4.9}</span>
-              <span style={styles.badge}>🛵 {estabelecimentoSelecionado.tempoEntrega || 25}-{estabelecimentoSelecionado.tempoEntrega + 10 || 35} min</span>
-              <span style={estabelecimentoSelecionado.taxaEntrega > 0 ? styles.badgeFrete : styles.badgeFreteGratis}>
-                {estabelecimentoSelecionado.taxaEntrega > 0 
-                  ? `Frete R$ ${Number(estabelecimentoSelecionado.taxaEntrega).toFixed(2)}` 
-                  : 'Frete Grátis'}
-              </span>
+        {/* Filtros Avançados */}
+        {filtrosAbertos && (
+          <div style={styles.filtersPanel}>
+            <div style={styles.filtersHeader}>
+              <h3 style={styles.filtersTitle}>Filtros</h3>
+              <button onClick={() => setFiltrosAbertos(false)} style={styles.closeButton}>
+                <X size={20} />
+              </button>
             </div>
-            <p style={styles.storeInfo}>
-              {estabelecimentoSelecionado.endereco?.bairro || 'Vila Santana'} • {estabelecimentoSelecionado.endereco?.cidade || 'Araraquara'}
-              {estabelecimentoSelecionado.endereco?.rua && `, ${estabelecimentoSelecionado.endereco.rua}`}
-            </p>
-          </div>
+            
+            <div style={styles.filterGroup}>
+              <label style={styles.filterLabel}>
+                <input 
+                  type="checkbox" 
+                  checked={filtroFreteGratis}
+                  onChange={(e) => setFiltroFreteGratis(e.target.checked)}
+                  style={styles.checkbox}
+                />
+                <span style={styles.checkboxLabel}>Frete Grátis</span>
+              </label>
+              
+              <label style={styles.filterLabel}>
+                <input 
+                  type="checkbox" 
+                  checked={filtroAbertos}
+                  onChange={(e) => setFiltroAbertos(e.target.checked)}
+                  style={styles.checkbox}
+                />
+                <span style={styles.checkboxLabel}>Abertos Agora</span>
+              </label>
+            </div>
 
-          <h3 style={styles.sectionTitle}>Cardápio</h3>
-          <div style={styles.cardapioList}>
-            {cardapio.length === 0 ? (
-              <div style={styles.emptyState}>
-                <p style={styles.emptyText}>Nenhum produto cadastrado ainda</p>
-              </div>
-            ) : (
-              cardapio.map(item => (
-                <div key={item.id} style={styles.itemCard}>
-                  <div style={styles.itemInfo}>
-                    <h4 style={styles.itemName}>{item.nome}</h4>
-                    <p style={styles.itemDesc}>{item.descricao || 'Sem descrição'}</p>
-                    <span style={styles.itemPrice}>
-                      R$ {item.preco ? Number(item.preco).toFixed(2) : '0.00'}
-                    </span>
-                  </div>
-                  {item.foto && (
-                    <img src={item.foto} alt={item.nome} style={styles.itemFoto} />
-                  )}
-                </div>
-              ))
+            <div style={styles.filterGroup}>
+              <label style={styles.filterLabel}>Raio de Entrega: {raioKm} km</label>
+              <input 
+                type="range" 
+                min="1" 
+                max="20" 
+                value={raioKm}
+                onChange={(e) => setRaioKm(parseInt(e.target.value))}
+                style={styles.rangeSlider}
+              />
+            </div>
+
+            <div style={styles.filterGroup}>
+              <label style={styles.filterLabel}>Ordenar por:</label>
+              <select 
+                value={ordenacao}
+                onChange={(e) => setOrdenacao(e.target.value)}
+                style={styles.selectFilter}
+              >
+                <option value="relevancia">Mais Relevantes</option>
+                <option value="menor-preco">Menor Preço</option>
+                <option value="maior-preco">Maior Preço</option>
+                <option value="mais-proximo">Mais Próximo</option>
+                <option value="mais-rapido">Mais Rápido</option>
+                <option value="melhor-avaliacao">Melhor Avaliação</option>
+              </select>
+            </div>
+          </div>
+        )}
+
+        {/* Conteúdo Principal */}
+        <main style={styles.content}>
+          <div style={styles.resultsHeader}>
+            <h2 style={styles.sectionTitle}>
+              Lojas Disponíveis em {cidade}
+              <span style={styles.resultsCount}> ({estabelecimentosOrdenados.length})</span>
+            </h2>
+            {(filtroFreteGratis || filtroAbertos || categoriasAtivas.length > 0 || ordenacao !== 'relevancia' || pesquisa) && (
+              <button 
+                onClick={() => {
+                  setCategoriasAtivas([]);
+                  setFiltroFreteGratis(false);
+                  setFiltroAbertos(false);
+                  setOrdenacao('relevancia');
+                  setRaioKm(5);
+                  setPesquisa('');
+                }}
+                style={styles.clearFilters}
+              >
+                Limpar filtros
+              </button>
             )}
           </div>
+
+          {loading ? (
+            <div style={styles.loadingState}>
+              <div style={styles.spinner}></div>
+              <p>Carregando estabelecimentos...</p>
+            </div>
+          ) : estabelecimentosOrdenados.length === 0 ? (
+            <div style={styles.emptyState}>
+              <Search size={48} color="#94A3B8" />
+              <p style={styles.emptyText}>Nenhum estabelecimento encontrado</p>
+              <p style={{ fontSize: '14px', color: '#94A3B8', marginBottom: '20px' }}>
+                {estabelecimentos.length > 0 
+                  ? 'Tente limpar os filtros ou mudar a cidade'
+                  : 'Nenhum estabelecimento cadastrado no sistema'}
+              </p>
+              <button 
+                onClick={() => {
+                  setCategoriasAtivas([]);
+                  setPesquisa('');
+                  setFiltroFreteGratis(false);
+                  setFiltroAbertos(false);
+                }}
+                style={styles.emptyButton}
+              >
+                Limpar pesquisa e filtros
+              </button>
+            </div>
+          ) : (
+            <div style={styles.grid}>
+              {estabelecimentosOrdenados.map(est => (
+                <div 
+                  key={est.id} 
+                  style={styles.card}
+                  onClick={() => handleSelecionarEstabelecimento(est)}
+                >
+                  <div style={styles.cardHeader}>
+                    <div style={styles.cardImage}>
+                      {est.fotoUrl ? (
+                        <img 
+                          src={est.fotoUrl} 
+                          alt={est.cliente} 
+                          style={styles.imagemEstabelecimento}
+                        />
+                      ) : (
+                        <div style={styles.imagePlaceholder}>
+                          {est.cliente?.charAt(0) || 'E'}
+                        </div>
+                      )}
+                      {!est.aberto && <div style={styles.closedOverlay}>FECHADO</div>}
+                    </div>
+                    <div style={styles.estStatus}>
+                      {est.aberto ? (
+                        <span style={styles.statusAberto}>● Aberto agora</span>
+                      ) : (
+                        <span style={styles.statusFechado}>● Fechado</span>
+                      )}
+                      {est.quantidadeItensCardapio > 0 && (
+                        <span style={styles.cardapioBadge}>
+                          <Tag size={12} /> {est.quantidadeItensCardapio} itens
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  
+                  <div style={styles.cardBody}>
+                    <div style={styles.cardInfo}>
+                      <h3 style={styles.estNome}>{est.cliente || 'Sem Nome'}</h3>
+                      <div style={styles.rating}>
+                        <Star size={14} fill="#FBBF24" color="#FBBF24" /> 
+                        <span style={styles.ratingText}>{est.avaliacao?.toFixed(1) || 4.9}</span>
+                        <span style={styles.ratingCount}>({est.numAvaliacoes || 150}+)</span>
+                      </div>
+                    </div>
+                    
+                    <p style={styles.estCategoria}>
+                      {categorias.find(c => c.id === est.categoria)?.nome || 'Variado'}
+                    </p>
+                    
+                    <div style={styles.estDetails}>
+                      <div style={styles.detailItem}>
+                        <Clock size={14} color="#94A3B8" />
+                        <span>{est.tempoEntrega || 25}-{est.tempoEntrega + 10 || 35} min</span>
+                      </div>
+                      <div style={styles.detailItem}>
+                        <Navigation size={14} color="#94A3B8" />
+                        <span>{est.distancia || 2} km</span>
+                      </div>
+                      <div style={styles.detailItem}>
+                        <Bike size={14} color="#94A3B8" />
+                        <span>{est.taxaEntrega > 0 ? `R$ ${Number(est.taxaEntrega).toFixed(2)}` : 'Grátis'}</span>
+                      </div>
+                    </div>
+                    
+                    <div style={styles.cardFooter}>
+                      <span style={styles.estEndereco}>
+                        {est.endereco?.bairro || 'Bairro'} • {est.endereco?.cidade || 'Cidade'}
+                      </span>
+                      <div style={styles.btnVerCardapio}>
+                        Ver Cardápio <ChevronRight size={16} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          
+          {/* Debug: Mostrar dados carregados */}
+          {!loading && estabelecimentos.length === 0 && (
+            <div style={styles.debugInfo}>
+              <p style={{ fontSize: '14px', color: '#EF4444' }}>
+                ⚠️ Nenhum estabelecimento encontrado no Firebase.
+              </p>
+              <p style={{ fontSize: '12px', color: '#64748B' }}>
+                Verifique se a coleção 'estabelecimentos' existe no Firestore.
+              </p>
+            </div>
+          )}
         </main>
       </div>
     );
   }
-
-  // Tela principal
-  return (
-    <div style={styles.container}>
-      {/* Header */}
-      <header style={styles.header}>
-        <div style={styles.headerTop}>
-          <h1 style={styles.logo}>
-            <span style={styles.logoBlue}>Entrega</span>
-            <span style={styles.logoGreen}>Aqui</span>
-          </h1>
-          
-          <div style={styles.locationSelector}>
-            <MapPin size={18} color="#10B981" />
-            <select 
-              value={cidade} 
-              onChange={(e) => setCidade(e.target.value)}
-              style={styles.selectCity}
-            >
-              <option value="Araraquara">Araraquara, SP</option>
-              <option value="São Carlos">São Carlos, SP</option>
-              <option value="Ribeirão Preto">Ribeirão Preto, SP</option>
-              <option value="Campinas">Campinas, SP</option>
-            </select>
-          </div>
-        </div>
-
-        <div style={styles.searchContainer}>
-          <Search size={20} color="#10B981" />
-          <input 
-            type="text" 
-            placeholder="Buscar estabelecimentos, lanches, japonesa..."
-            style={styles.searchInput}
-            value={pesquisa}
-            onChange={(e) => setPesquisa(e.target.value)}
-          />
-          <button 
-            onClick={() => setFiltrosAbertos(!filtrosAbertos)}
-            style={styles.filterButton}
-          >
-            <Filter size={20} color="#ffffff" />
-          </button>
-        </div>
-
-        {/* Categorias */}
-        <div style={styles.categoriesContainer}>
-          {categorias.map(cat => (
-            <button
-              key={cat.id}
-              onClick={() => {
-                if (categoriasAtivas.includes(cat.id)) {
-                  setCategoriasAtivas(categoriasAtivas.filter(c => c !== cat.id));
-                } else {
-                  setCategoriasAtivas([...categoriasAtivas, cat.id]);
-                }
-              }}
-              style={{
-                ...styles.categoryButton,
-                backgroundColor: categoriasAtivas.includes(cat.id) ? '#10B981' : '#0F3460'
-              }}
-            >
-              {cat.nome}
-              {categoriasAtivas.includes(cat.id) && <Check size={14} style={{ marginLeft: '5px' }} />}
-            </button>
-          ))}
-        </div>
-      </header>
-
-      {/* Filtros Avançados */}
-      {filtrosAbertos && (
-        <div style={styles.filtersPanel}>
-          <div style={styles.filtersHeader}>
-            <h3 style={styles.filtersTitle}>Filtros</h3>
-            <button onClick={() => setFiltrosAbertos(false)} style={styles.closeButton}>
-              <X size={20} />
-            </button>
-          </div>
-          
-          <div style={styles.filterGroup}>
-            <label style={styles.filterLabel}>
-              <input 
-                type="checkbox" 
-                checked={filtroFreteGratis}
-                onChange={(e) => setFiltroFreteGratis(e.target.checked)}
-                style={styles.checkbox}
-              />
-              <span style={styles.checkboxLabel}>Frete Grátis</span>
-            </label>
-            
-            <label style={styles.filterLabel}>
-              <input 
-                type="checkbox" 
-                checked={filtroAbertos}
-                onChange={(e) => setFiltroAbertos(e.target.checked)}
-                style={styles.checkbox}
-              />
-              <span style={styles.checkboxLabel}>Abertos Agora</span>
-            </label>
-          </div>
-
-          <div style={styles.filterGroup}>
-            <label style={styles.filterLabel}>Raio de Entrega: {raioKm} km</label>
-            <input 
-              type="range" 
-              min="1" 
-              max="20" 
-              value={raioKm}
-              onChange={(e) => setRaioKm(parseInt(e.target.value))}
-              style={styles.rangeSlider}
-            />
-          </div>
-
-          <div style={styles.filterGroup}>
-            <label style={styles.filterLabel}>Ordenar por:</label>
-            <select 
-              value={ordenacao}
-              onChange={(e) => setOrdenacao(e.target.value)}
-              style={styles.selectFilter}
-            >
-              <option value="relevancia">Mais Relevantes</option>
-              <option value="menor-preco">Menor Preço</option>
-              <option value="maior-preco">Maior Preço</option>
-              <option value="mais-proximo">Mais Próximo</option>
-              <option value="mais-rapido">Mais Rápido</option>
-              <option value="melhor-avaliacao">Melhor Avaliação</option>
-            </select>
-          </div>
-        </div>
-      )}
-
-      {/* Conteúdo Principal */}
-      <main style={styles.content}>
-        <div style={styles.resultsHeader}>
-          <h2 style={styles.sectionTitle}>
-            Lojas Disponíveis em {cidade}
-            <span style={styles.resultsCount}> ({estabelecimentosOrdenados.length})</span>
-          </h2>
-          {(filtroFreteGratis || filtroAbertos || categoriasAtivas.length > 0 || ordenacao !== 'relevancia' || pesquisa) && (
-            <button 
-              onClick={() => {
-                setCategoriasAtivas([]);
-                setFiltroFreteGratis(false);
-                setFiltroAbertos(false);
-                setOrdenacao('relevancia');
-                setRaioKm(5);
-                setPesquisa('');
-              }}
-              style={styles.clearFilters}
-            >
-              Limpar filtros
-            </button>
-          )}
-        </div>
-
-        {loading ? (
-          <div style={styles.loadingState}>
-            <div style={styles.spinner}></div>
-            <p>Carregando estabelecimentos...</p>
-          </div>
-        ) : estabelecimentosOrdenados.length === 0 ? (
-          <div style={styles.emptyState}>
-            <Search size={48} color="#94A3B8" />
-            <p style={styles.emptyText}>Nenhum estabelecimento encontrado</p>
-            <button 
-              onClick={() => {
-                setCategoriasAtivas([]);
-                setPesquisa('');
-                setFiltroFreteGratis(false);
-                setFiltroAbertos(false);
-              }}
-              style={styles.emptyButton}
-            >
-              Limpar pesquisa e filtros
-            </button>
-          </div>
-        ) : (
-          <div style={styles.grid}>
-            {estabelecimentosOrdenados.map(est => (
-              <div 
-                key={est.id} 
-                style={styles.card}
-                onClick={() => setEstabelecimentoSelecionado(est)}
-              >
-                <div style={styles.cardHeader}>
-                  <div style={styles.cardImage}>
-                    {/* Aqui você pode adicionar uma imagem real do estabelecimento */}
-                    <div style={styles.imagePlaceholder}>
-                      {est.cliente?.charAt(0) || 'E'}
-                    </div>
-                    {!est.aberto && <div style={styles.closedOverlay}>FECHADO</div>}
-                  </div>
-                  <div style={styles.estStatus}>
-                    {est.aberto ? (
-                      <span style={styles.statusAberto}>● Aberto</span>
-                    ) : (
-                      <span style={styles.statusFechado}>● Fechado</span>
-                    )}
-                  </div>
-                </div>
-                
-                <div style={styles.cardBody}>
-                  <div style={styles.cardInfo}>
-                    <h3 style={styles.estNome}>{est.cliente || 'Sem Nome'}</h3>
-                    <div style={styles.rating}>
-                      <Star size={14} fill="#FBBF24" color="#FBBF24" /> 
-                      <span style={styles.ratingText}>{est.avaliacao || 4.9}</span>
-                      <span style={styles.ratingCount}>({est.numAvaliacoes || 150}+)</span>
-                    </div>
-                  </div>
-                  
-                  <p style={styles.estCategoria}>
-                    {categorias.find(c => c.id === est.categoria)?.nome || 'Variado'}
-                  </p>
-                  
-                  <div style={styles.estDetails}>
-                    <div style={styles.detailItem}>
-                      <Clock size={14} color="#94A3B8" />
-                      <span>{est.tempoEntrega || 25}-{est.tempoEntrega + 10 || 35} min</span>
-                    </div>
-                    <div style={styles.detailItem}>
-                      <Navigation size={14} color="#94A3B8" />
-                      <span>{est.distancia || 2} km</span>
-                    </div>
-                    <div style={styles.detailItem}>
-                      <Bike size={14} color="#94A3B8" />
-                      <span>{est.taxaEntrega > 0 ? `R$ ${Number(est.taxaEntrega).toFixed(2)}` : 'Grátis'}</span>
-                    </div>
-                  </div>
-                  
-                  <div style={styles.cardFooter}>
-                    <span style={styles.estEndereco}>
-                      {est.endereco?.bairro || 'Bairro'} • {est.endereco?.cidade || 'Cidade'}
-                    </span>
-                    <div style={styles.btnVerCardapio}>
-                      Ver Cardápio <ChevronRight size={16} />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </main>
-    </div>
-  );
 };
 
-// Estilos (mantidos os mesmos do código anterior)
+// Estilos (com adições para a nova estrutura)
 const styles = {
   container: { 
     backgroundColor: '#F8FAFC', 
@@ -566,8 +698,7 @@ const styles = {
     gap: '10px',
     overflowX: 'auto',
     paddingBottom: '5px',
-    scrollbarWidth: 'none',
-    msOverflowStyle: 'none'
+    scrollbarWidth: 'none'
   },
   
   categoryButton: {
@@ -724,7 +855,14 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    position: 'relative'
+    position: 'relative',
+    overflow: 'hidden'
+  },
+  
+  imagemEstabelecimento: {
+    width: '100%',
+    height: '100%',
+    objectFit: 'cover'
   },
   
   imagePlaceholder: {
@@ -759,19 +897,40 @@ const styles = {
     position: 'absolute',
     top: '12px',
     left: '12px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '5px',
+    alignItems: 'flex-start'
+  },
+  
+  statusAberto: {
     backgroundColor: 'rgba(255, 255, 255, 0.9)',
     padding: '4px 12px',
     borderRadius: '20px',
     fontSize: '12px',
-    fontWeight: '600'
-  },
-  
-  statusAberto: {
+    fontWeight: '600',
     color: '#10B981'
   },
   
   statusFechado: {
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    padding: '4px 12px',
+    borderRadius: '20px',
+    fontSize: '12px',
+    fontWeight: '600',
     color: '#EF4444'
+  },
+  
+  cardapioBadge: {
+    backgroundColor: 'rgba(255, 255, 255, 0.9)',
+    padding: '4px 12px',
+    borderRadius: '20px',
+    fontSize: '11px',
+    fontWeight: '600',
+    color: '#0F3460',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '4px'
   },
   
   cardBody: {
@@ -840,7 +999,11 @@ const styles = {
   
   estEndereco: {
     fontSize: '13px',
-    color: '#94A3B8'
+    color: '#94A3B8',
+    maxWidth: '60%',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap'
   },
   
   btnVerCardapio: {
@@ -890,151 +1053,17 @@ const styles = {
     transition: 'all 0.2s ease'
   },
   
-  headerSimples: {
-    backgroundColor: '#0F3460',
-    padding: '20px',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '15px'
-  },
-  
-  btnBack: {
-    border: 'none',
-    background: 'none',
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center'
-  },
-  
-  titleNav: {
-    fontSize: '18px',
-    fontWeight: '700',
-    color: '#ffffff',
-    margin: 0
-  },
-  
-  storeHero: {
-    padding: '30px 20px 20px',
-    borderBottom: '1px solid #E2E8F0'
-  },
-  
-  storeName: {
-    fontSize: '28px',
-    fontWeight: '900',
-    color: '#0F3460',
-    margin: '0 0 15px 0'
-  },
-  
-  storeBadges: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: '8px',
-    marginBottom: '10px'
-  },
-  
-  badgeAberto: {
-    backgroundColor: '#D1FAE5',
-    color: '#065F46',
-    padding: '4px 12px',
-    borderRadius: '20px',
-    fontSize: '13px',
-    fontWeight: '600'
-  },
-  
-  badgeFechado: {
-    backgroundColor: '#FEE2E2',
-    color: '#991B1B',
-    padding: '4px 12px',
-    borderRadius: '20px',
-    fontSize: '13px',
-    fontWeight: '600'
-  },
-  
-  badge: {
-    backgroundColor: '#FEF3C7',
-    color: '#92400E',
-    padding: '4px 12px',
-    borderRadius: '20px',
-    fontSize: '13px',
-    fontWeight: '600'
-  },
-  
-  badgeFrete: {
-    backgroundColor: '#DBEAFE',
-    color: '#1E40AF',
-    padding: '4px 12px',
-    borderRadius: '20px',
-    fontSize: '13px',
-    fontWeight: '600'
-  },
-  
-  badgeFreteGratis: {
-    backgroundColor: '#D1FAE5',
-    color: '#065F46',
-    padding: '4px 12px',
-    borderRadius: '20px',
-    fontSize: '13px',
-    fontWeight: '600'
-  },
-  
-  storeInfo: {
-    color: '#64748B',
-    fontSize: '14px',
-    marginTop: '10px'
-  },
-  
-  cardapioList: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '16px',
-    padding: '20px 0'
-  },
-  
-  itemCard: {
-    backgroundColor: '#ffffff',
-    display: 'flex',
-    justifyContent: 'space-between',
-    padding: '20px',
-    borderRadius: '16px',
-    border: '1px solid #E2E8F0',
-    transition: 'all 0.2s ease'
-  },
-  
-  itemInfo: {
-    flex: 1
-  },
-  
-  itemName: {
-    fontSize: '18px',
-    fontWeight: '700',
-    color: '#0F3460',
-    margin: '0 0 8px 0'
-  },
-  
-  itemDesc: {
-    fontSize: '14px',
-    color: '#64748B',
-    margin: '0 0 15px 0',
-    lineHeight: 1.5
-  },
-  
-  itemPrice: {
-    fontSize: '18px',
-    fontWeight: '800',
-    color: '#10B981'
-  },
-  
-  itemFoto: {
-    width: '100px',
-    height: '100px',
-    borderRadius: '12px',
-    objectFit: 'cover',
-    marginLeft: '15px'
+  debugInfo: {
+    backgroundColor: '#FEF2F2',
+    border: '1px solid #FECACA',
+    borderRadius: '8px',
+    padding: '15px',
+    marginTop: '20px',
+    textAlign: 'center'
   }
 };
 
-// Adicionar estilos globais
+// Estilos globais
 const globalStyles = `
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
   
@@ -1085,8 +1114,10 @@ const globalStyles = `
 `;
 
 // Adicionar estilos globais ao documento
-const styleSheet = document.createElement("style");
-styleSheet.innerText = globalStyles;
-document.head.appendChild(styleSheet);
+if (typeof document !== 'undefined') {
+  const styleSheet = document.createElement("style");
+  styleSheet.innerText = globalStyles;
+  document.head.appendChild(styleSheet);
+}
 
 export default PaginaInicialCliente;
