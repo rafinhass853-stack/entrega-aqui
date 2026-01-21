@@ -1,11 +1,10 @@
 import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { db } from './firebase';
 import { 
-  collection, onSnapshot, query, getDocs, doc, getDoc 
+  collection, onSnapshot, query, getDocs, doc, getDoc, where 
 } from 'firebase/firestore';
 import { 
-  Search, Star, MapPin, Clock, 
-  Filter, Tag
+  Search, MapPin, Filter, Home, ClipboardList, User, Calendar, CreditCard, Loader2, LogOut, UserPlus, LogIn
 } from 'lucide-react';
 import Cardapio from './Cardapio';
 import Carrinho from './Carrinho';
@@ -32,12 +31,12 @@ const PaginaInicialCliente = () => {
   const [cidade, setCidade] = useState('Araraquara');
   const [filtrosAbertos, setFiltrosAbertos] = useState(false);
   const [categoriasAtivas, setCategoriasAtivas] = useState([]);
-  const [ordenacao, setOrdenacao] = useState('relevancia');
   const [filtroFreteGratis, setFiltroFreteGratis] = useState(false);
   const [filtroAbertos, setFiltroAbertos] = useState(false);
   const [loading, setLoading] = useState(true);
   const [carrinho, setCarrinho] = useState([]);
-  const [dadosCliente, setDadosCliente] = useState(null);
+  const [dadosCliente, setDadosCliente] = useState(JSON.parse(localStorage.getItem('dadosCliente')) || null);
+  const [historicoPedidos, setHistoricoPedidos] = useState([]);
 
   // --- LÓGICA DE HORÁRIOS ---
   const converterHorarioParaMinutos = useCallback((horarioStr) => {
@@ -48,109 +47,113 @@ const PaginaInicialCliente = () => {
 
   const verificarSeEstaAberto = useCallback((horarioData) => {
     if (!horarioData || !horarioData.aberto) return false;
-    
     const agora = new Date();
     const minutosAtuais = agora.getHours() * 60 + agora.getMinutes();
     const abertura = converterHorarioParaMinutos(horarioData.inicio);
     const fechamento = converterHorarioParaMinutos(horarioData.fim);
-    
-    // Suporte para horários que passam da meia-noite (ex: 18:00 às 02:00)
-    if (fechamento < abertura) {
-        return minutosAtuais >= abertura || minutosAtuais <= fechamento;
-    }
-    
+    if (fechamento < abertura) return minutosAtuais >= abertura || minutosAtuais <= fechamento;
     return minutosAtuais >= abertura && minutosAtuais <= fechamento;
   }, [converterHorarioParaMinutos]);
 
+  // --- BUSCA DE ESTABELECIMENTOS ---
   useEffect(() => {
     const estabelecimentosRef = collection(db, 'estabelecimentos');
     const q = query(estabelecimentosRef);
-
     const unsubscribe = onSnapshot(q, async (snapshot) => {
       const listaPromises = snapshot.docs.map(async (docRef) => {
         const data = docRef.data();
         const id = docRef.id;
-
-        // 1. BUSCAR HORÁRIOS (configuracao -> sistema)
         let horarioHojeString = "Horário não definido";
         let abertoAgora = false;
         try {
           const sistemaDocRef = doc(db, 'estabelecimentos', id, 'configuracao', 'sistema');
           const sistemaSnap = await getDoc(sistemaDocRef);
-          
           if (sistemaSnap.exists()) {
             const config = sistemaSnap.data();
             const diasSemana = ["domingo", "segunda", "terca", "quarta", "quinta", "sexta", "sabado"];
             const hojeNome = diasSemana[new Date().getDay()];
-            
             const horarioHoje = config.horarios?.find(h => h.dia === hojeNome);
             abertoAgora = verificarSeEstaAberto(horarioHoje);
-            
-            if (horarioHoje?.aberto) {
-                horarioHojeString = `${horarioHoje.inicio} às ${horarioHoje.fim}`;
-            } else {
-                horarioHojeString = "Fechado hoje";
-            }
+            horarioHojeString = horarioHoje?.aberto ? `${horarioHoje.inicio} às ${horarioHoje.fim}` : "Fechado hoje";
           }
-        } catch (e) { console.error("Erro ao buscar horários:", e); }
-
-        // 2. BUSCAR QTD ITENS NO CARDÁPIO
-        let qtdItens = 0;
-        try {
-          const cardapioRef = collection(db, 'estabelecimentos', id, 'cardapio');
-          const cardapioSnap = await getDocs(cardapioRef);
-          qtdItens = cardapioSnap.size;
-        } catch (e) { console.error("Erro cardapio:", e); }
+        } catch (e) { console.error(e); }
 
         return {
-          id,
-          ...data,
-          // Ajustado para 'loginUsuario' conforme seu print do Firestore
+          id, ...data,
           cliente: data.loginUsuario || data.cliente || "Loja",
-          fotoUrl: data.fotoUrl || null, // Foto na raiz do doc
           aberto: abertoAgora,
           textoHorario: horarioHojeString,
-          quantidadeItensCardapio: qtdItens,
           categoria: data.categoria || 'lanches',
           taxaEntrega: data.taxaEntrega || 0,
           tempoEntrega: data.tempoEntrega || 30,
-          avaliacao: data.avaliacao || 5.0,
-          endereco: {
-            bairro: data.endereco?.bairro || data.bairro || 'Bairro',
-            cidade: data.endereco?.cidade || data.cidade || 'Araraquara'
-          }
+          endereco: { bairro: data.endereco?.bairro || data.bairro || 'Bairro', cidade: data.endereco?.cidade || data.cidade || 'Araraquara' }
         };
       });
-
       const listaCompleta = await Promise.all(listaPromises);
       setEstabelecimentos(listaCompleta);
       setLoading(false);
     });
-
     return () => unsubscribe();
   }, [verificarSeEstaAberto]);
 
+  // --- BUSCAR HISTÓRICO ---
+  useEffect(() => {
+    if (!dadosCliente?.telefone) {
+      setHistoricoPedidos([]);
+      return;
+    }
+    const telBusca = String(dadosCliente.telefone);
+    const q = query(collection(db, "Pedidos"), where("cliente.telefone", "==", telBusca));
+    return onSnapshot(q, (snapshot) => {
+      const lista = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setHistoricoPedidos(lista.sort((a, b) => (b.dataCriacao?.seconds || 0) - (a.dataCriacao?.seconds || 0)));
+    });
+  }, [dadosCliente]);
+
   // --- FILTROS ---
   const estabelecimentosOrdenados = useMemo(() => {
-    return estabelecimentos
-      .filter(est => {
-        const matchCidade = est.endereco.cidade.toLowerCase() === cidade.toLowerCase();
-        const matchPesquisa = est.cliente.toLowerCase().includes(pesquisa.toLowerCase());
-        const matchCategoria = categoriasAtivas.length === 0 || categoriasAtivas.includes(est.categoria);
-        const matchFrete = !filtroFreteGratis || Number(est.taxaEntrega) === 0;
-        const matchAberto = !filtroAbertos || est.aberto;
-        
-        return matchCidade && matchPesquisa && matchCategoria && matchFrete && matchAberto;
-      });
+    return estabelecimentos.filter(est => {
+      const matchCidade = est.endereco.cidade.toLowerCase() === cidade.toLowerCase();
+      const matchPesquisa = est.cliente.toLowerCase().includes(pesquisa.toLowerCase());
+      const matchCategoria = categoriasAtivas.length === 0 || categoriasAtivas.includes(est.categoria);
+      const matchFrete = !filtroFreteGratis || Number(est.taxaEntrega) === 0;
+      const matchAberto = !filtroAbertos || est.aberto;
+      return matchCidade && matchPesquisa && matchCategoria && matchFrete && matchAberto;
+    });
   }, [estabelecimentos, cidade, pesquisa, categoriasAtivas, filtroFreteGratis, filtroAbertos]);
 
-  const handleSelecionarEstabelecimento = (est) => {
-    setEstabelecimentoSelecionado(est);
-    setTelaAtual('cardapio');
+  // --- FUNÇÕES DE GERENCIAMENTO ---
+  const logout = () => {
+    localStorage.removeItem('dadosCliente');
+    setDadosCliente(null);
+    setTelaAtual('home');
   };
 
+  const atualizarQuantidade = (idUnico, novaQuantidade) => {
+    if (novaQuantidade <= 0) {
+      setCarrinho(prev => prev.filter(item => item.idUnico !== idUnico));
+    } else {
+      setCarrinho(prev => prev.map(item => 
+        item.idUnico === idUnico ? { ...item, quantidade: novaQuantidade } : item
+      ));
+    }
+  };
+
+  const removerItem = (idUnico) => {
+    setCarrinho(prev => prev.filter(item => item.idUnico !== idUnico));
+  };
+
+  const navegarParaCheckout = () => {
+    if (dadosCliente) {
+      setTelaAtual('enviar');
+    } else {
+      setTelaAtual('cadastro');
+    }
+  };
+
+  // --- RENDERIZADORES ---
   const renderTelaHome = () => (
-    <div style={styles.container}>
+    <div style={{...styles.container, paddingBottom: '80px'}}>
       <header style={styles.header}>
         <div style={styles.headerTop}>
           <h1 style={styles.logo}><span style={styles.logoBlue}>Entrega</span><span style={styles.logoGreen}>Aqui</span></h1>
@@ -162,102 +165,38 @@ const PaginaInicialCliente = () => {
             </select>
           </div>
         </div>
-
         <div style={styles.searchContainer}>
           <Search size={20} color="#10B981" />
-          <input 
-            type="text" 
-            placeholder="Buscar lojas ou pratos..."
-            style={styles.searchInput}
-            value={pesquisa}
-            onChange={(e) => setPesquisa(e.target.value)}
-          />
-          <button onClick={() => setFiltrosAbertos(!filtrosAbertos)} style={styles.filterButton}>
-            <Filter size={20} color="#fff" />
-          </button>
+          <input type="text" placeholder="Buscar lojas..." style={styles.searchInput} value={pesquisa} onChange={(e) => setPesquisa(e.target.value)} />
+          <button onClick={() => setFiltrosAbertos(!filtrosAbertos)} style={styles.filterButton}><Filter size={20} color="#fff" /></button>
         </div>
-
         <div style={styles.categoriesContainer}>
           {categorias.map(cat => (
-            <button
-              key={cat.id}
-              onClick={() => setCategoriasAtivas(prev => 
-                prev.includes(cat.id) ? prev.filter(c => c !== cat.id) : [...prev, cat.id]
-              )}
-              style={{
-                ...styles.categoryButton,
-                backgroundColor: categoriasAtivas.includes(cat.id) ? '#10B981' : '#0F3460'
-              }}
-            >
-              {cat.nome}
-            </button>
+            <button key={cat.id} onClick={() => setCategoriasAtivas(prev => prev.includes(cat.id) ? prev.filter(c => c !== cat.id) : [...prev, cat.id])}
+              style={{...styles.categoryButton, backgroundColor: categoriasAtivas.includes(cat.id) ? '#10B981' : '#0F3460'}}>{cat.nome}</button>
           ))}
         </div>
       </header>
 
-      {filtrosAbertos && (
-        <div style={styles.filtersPanel}>
-          <div style={styles.filterGroup}>
-            <label style={styles.filterLabel}>
-              <input type="checkbox" checked={filtroFreteGratis} onChange={(e) => setFiltroFreteGratis(e.target.checked)} />
-              <span> Frete Grátis</span>
-            </label>
-            <label style={styles.filterLabel}>
-              <input type="checkbox" checked={filtroAbertos} onChange={(e) => setFiltroAbertos(e.target.checked)} />
-              <span> Aberto Agora</span>
-            </label>
-          </div>
-        </div>
-      )}
-
       <main style={styles.content}>
-        <h2 style={styles.sectionTitle}>Lojas em {cidade} ({estabelecimentosOrdenados.length})</h2>
-        
         {loading ? (
-          <div style={styles.loadingState}>Carregando lojas...</div>
+            <div style={{textAlign: 'center', marginTop: '50px'}}><Loader2 className="animate-spin" size={40} color="#10B981" /></div>
         ) : (
           <div style={styles.grid}>
             {estabelecimentosOrdenados.map(est => (
-              <div key={est.id} style={styles.card} onClick={() => handleSelecionarEstabelecimento(est)}>
+              <div key={est.id} style={styles.card} onClick={() => { setEstabelecimentoSelecionado(est); setTelaAtual('cardapio'); }}>
                 <div style={styles.cardImage}>
-                   {est.fotoUrl ? (
-                     <img src={est.fotoUrl} style={styles.imagemEstabelecimento} alt="capa" />
-                   ) : (
-                     <div style={styles.imagePlaceholder}>{est.cliente[0]}</div>
-                   )}
-                   
-                   {/* Badge de Aberto/Fechado */}
-                   <div style={{
-                     ...styles.statusBadge,
-                     backgroundColor: est.aberto ? '#10B981' : '#EF4444'
-                   }}>
-                     {est.aberto ? 'ABERTO' : 'FECHADO'}
-                   </div>
+                  {est.fotoUrl ? <img src={est.fotoUrl} style={styles.imagemEstabelecimento} alt="capa" /> : <div style={styles.imagePlaceholder}>{est.cliente[0]}</div>}
+                  <div style={{...styles.statusBadge, backgroundColor: est.aberto ? '#10B981' : '#EF4444'}}>{est.aberto ? 'ABERTO' : 'FECHADO'}</div>
                 </div>
-                
                 <div style={styles.cardBody}>
-                  <div style={styles.cardHeaderInfo}>
-                    <h3 style={styles.estNome}>{est.cliente}</h3>
-                    <div style={styles.rating}>
-                      <Star size={14} fill="#FBBF24" color="#FBBF24" /> 
-                      <span>{est.avaliacao}</span>
-                    </div>
-                  </div>
-
+                  <h3 style={styles.estNome}>{est.cliente}</h3>
                   <p style={styles.estCategoria}>{est.categoria} • {est.endereco.bairro}</p>
-                  
-                  <div style={styles.horarioInfo}>
-                    <Clock size={12} />
-                    <span>{est.textoHorario}</span>
-                  </div>
-
                   <div style={styles.estDetails}>
                     <span>🚀 {est.tempoEntrega} min</span>
-                    <span>•</span>
                     <span style={{ color: Number(est.taxaEntrega) === 0 ? '#10B981' : '#666', fontWeight: 'bold' }}>
-                      {Number(est.taxaEntrega) === 0 ? 'Frete Grátis' : `Entrega: R$ ${Number(est.taxaEntrega).toFixed(2)}`}
+                      {Number(est.taxaEntrega) === 0 ? 'Frete Grátis' : `R$ ${Number(est.taxaEntrega).toFixed(2)}`}
                     </span>
-                    <span style={styles.cardapioBadge}><Tag size={12} /> {est.quantidadeItensCardapio} itens</span>
                   </div>
                 </div>
               </div>
@@ -268,52 +207,140 @@ const PaginaInicialCliente = () => {
     </div>
   );
 
-  const renderTela = () => {
+  const renderHistorico = () => (
+    <div style={styles.containerInterno}>
+      <header style={styles.headerSimples}><h2>🛍️ Meus Pedidos</h2></header>
+      <div style={{padding: '20px'}}>
+        {historicoPedidos.length === 0 ? (
+          <div style={{textAlign: 'center', padding: '40px'}}>
+            <ClipboardList size={48} color="#CBD5E0" style={{marginBottom: '15px'}} />
+            <p style={{color: '#718096'}}>Você ainda não fez nenhum pedido.</p>
+          </div>
+        ) : (
+          historicoPedidos.map(p => (
+            <div key={p.id} style={{...styles.card, padding: '15px', marginBottom: '15px', borderLeft: '5px solid #10B981'}}>
+              <div style={{display: 'flex', justifyContent: 'space-between'}}>
+                <strong>{p.estabelecimento?.nome || "Loja"}</strong>
+                <span style={{fontSize: '12px', color: '#10B981', fontWeight: 'bold'}}>{p.status?.toUpperCase()}</span>
+              </div>
+              <p style={{fontSize: '13px', color: '#666', margin: '5px 0'}}>
+                {p.itens?.map(i => `${i.quantidade}x ${i.nome}`).join(', ')}
+              </p>
+              <div style={{display: 'flex', justifyContent: 'space-between', marginTop: '10px', fontSize: '14px'}}>
+                <span>Total: R$ {p.pagamento?.total?.toFixed(2)}</span>
+                <span style={{color: '#94A3B8'}}>{p.dataCriacao?.toDate().toLocaleDateString()}</span>
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+
+  const renderPerfil = () => (
+    <div style={styles.containerInterno}>
+      <header style={styles.headerSimples}><h2>👤 Meu Perfil</h2></header>
+      <div style={{padding: '20px'}}>
+        {dadosCliente ? (
+          <div style={styles.formPerfil}>
+            <div style={styles.perfilInfoBox}>
+              <div style={styles.avatarLarge}>{dadosCliente.nomeCompleto[0]}</div>
+              <h3 style={{margin: '10px 0 5px 0'}}>{dadosCliente.nomeCompleto}</h3>
+              <p style={{color: '#64748B', fontSize: '14px'}}>{dadosCliente.telefone}</p>
+            </div>
+            
+            <div style={styles.enderecoResumo}>
+              <MapPin size={16} />
+              <span>{dadosCliente.rua}, {dadosCliente.numero} - {dadosCliente.bairro}</span>
+            </div>
+
+            <button onClick={logout} style={styles.btnSecundario}>
+              <LogOut size={18} /> Sair da conta
+            </button>
+          </div>
+        ) : (
+          <div style={{textAlign: 'center', padding: '40px 20px'}}>
+            <div style={styles.avatarLarge}><User size={40} /></div>
+            <h2 style={{color: '#0F3460', marginBottom: '10px'}}>Olá, Visitante!</h2>
+            <p style={{color: '#64748B', marginBottom: '30px'}}>Acesse sua conta para ver seus pedidos e facilitar suas compras.</p>
+            
+            <button onClick={() => setTelaAtual('cadastro')} style={styles.btnPrincipal}>
+              <LogIn size={18} /> Entrar ou Cadastrar
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  const renderConteudo = () => {
     switch (telaAtual) {
-      case 'cardapio': return <Cardapio estabelecimento={estabelecimentoSelecionado} onVoltar={() => setTelaAtual('home')} onAbrirCarrinho={(c) => {setCarrinho(c); setTelaAtual('carrinho');}} />;
-      case 'carrinho': return <Carrinho carrinho={carrinho} estabelecimento={estabelecimentoSelecionado} onVoltar={() => setTelaAtual('cardapio')} onContinuar={() => setTelaAtual('cadastro')} />;
-      case 'cadastro': return <Cadastro onContinuar={(d) => {setDadosCliente(d); setTelaAtual('enviar');}} onVoltar={() => setTelaAtual('carrinho')} />;
-      case 'enviar': return <EnviarPedido carrinho={carrinho} estabelecimento={estabelecimentoSelecionado} dadosCliente={dadosCliente} onVoltar={() => setTelaAtual('cadastro')} onSucesso={() => setTelaAtual('home')} />;
-      default: return renderTelaHome();
+      case 'cardapio': 
+        return <Cardapio estabelecimento={estabelecimentoSelecionado} carrinho={carrinho} setCarrinho={setCarrinho} onVoltar={() => setTelaAtual('home')} onAbrirCarrinho={() => setTelaAtual('carrinho')} />;
+      case 'carrinho': 
+        return <Carrinho carrinho={carrinho} onAtualizarQuantidade={atualizarQuantidade} onRemoverItem={removerItem} estabelecimento={estabelecimentoSelecionado} onVoltar={() => setTelaAtual('cardapio')} onIrParaCadastro={navegarParaCheckout} />;
+      case 'cadastro': 
+        return <Cadastro dadosCliente={dadosCliente} onContinuar={(d) => {setDadosCliente(d); setTelaAtual('perfil');}} onVoltar={() => setTelaAtual('perfil')} />;
+      case 'enviar': 
+        return <EnviarPedido carrinho={carrinho} estabelecimento={estabelecimentoSelecionado} dadosCliente={dadosCliente} onVoltar={() => setTelaAtual('carrinho')} onSucesso={() => {setCarrinho([]); setTelaAtual('historico');}} />;
+      case 'historico': 
+        return renderHistorico();
+      case 'perfil': 
+        return renderPerfil();
+      default: 
+        return renderTelaHome();
     }
   };
 
-  return renderTela();
+  return (
+    <div style={styles.wrapper}>
+      {renderConteudo()}
+      {['home', 'historico', 'perfil'].includes(telaAtual) && (
+        <nav style={styles.bottomNav}>
+          <div style={styles.navItem} onClick={() => setTelaAtual('home')}><Home color={telaAtual === 'home' ? '#10B981' : '#94A3B8'} /><span>Início</span></div>
+          <div style={styles.navItem} onClick={() => setTelaAtual('historico')}><ClipboardList color={telaAtual === 'historico' ? '#10B981' : '#94A3B8'} /><span>Pedidos</span></div>
+          <div style={styles.navItem} onClick={() => setTelaAtual('perfil')}><User color={telaAtual === 'perfil' ? '#10B981' : '#94A3B8'} /><span>Perfil</span></div>
+        </nav>
+      )}
+    </div>
+  );
 };
 
 const styles = {
-  container: { backgroundColor: '#F8FAFC', minHeight: '100vh', fontFamily: 'sans-serif' },
-  header: { backgroundColor: '#0F3460', padding: '20px', borderBottomLeftRadius: '20px', borderBottomRightRadius: '20px' },
-  headerTop: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' },
-  logo: { margin: 0, fontSize: '24px' },
-  logoBlue: { color: '#fff' },
-  logoGreen: { color: '#10B981' },
-  locationSelector: { display: 'flex', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.1)', padding: '5px 10px', borderRadius: '10px' },
-  selectCity: { background: 'none', border: 'none', color: '#fff', outline: 'none' },
-  searchContainer: { display: 'flex', gap: '10px', backgroundColor: '#fff', padding: '10px', borderRadius: '12px' },
-  searchInput: { flex: 1, border: 'none', outline: 'none' },
-  filterButton: { backgroundColor: '#10B981', border: 'none', borderRadius: '8px', padding: '5px' },
-  categoriesContainer: { display: 'flex', gap: '10px', overflowX: 'auto', marginTop: '15px', paddingBottom: '5px' },
-  categoryButton: { border: 'none', padding: '8px 15px', borderRadius: '15px', color: '#fff', whiteSpace: 'nowrap' },
-  content: { padding: '20px' },
-  sectionTitle: { fontSize: '18px', color: '#0F3460', marginBottom: '20px' },
-  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px' },
-  card: { backgroundColor: '#fff', borderRadius: '15px', overflow: 'hidden', boxShadow: '0 4px 15px rgba(0,0,0,0.08)', cursor: 'pointer', transition: 'transform 0.2s' },
-  cardImage: { height: '160px', backgroundColor: '#eee', position: 'relative' },
-  imagemEstabelecimento: { width: '100%', height: '100%', objectFit: 'cover' },
-  imagePlaceholder: { height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '50px', color: '#ccc', fontWeight: 'bold' },
-  statusBadge: { position: 'absolute', top: '10px', left: '10px', padding: '4px 10px', borderRadius: '6px', color: '#fff', fontSize: '11px', fontWeight: 'bold' },
-  cardBody: { padding: '15px' },
-  cardHeaderInfo: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '5px' },
-  estNome: { margin: 0, fontSize: '17px', fontWeight: 'bold', color: '#1A202C' },
-  rating: { display: 'flex', alignItems: 'center', gap: '4px', fontSize: '14px', color: '#FBBF24', fontWeight: 'bold' },
-  estCategoria: { margin: '0', fontSize: '13px', color: '#718096' },
-  horarioInfo: { display: 'flex', alignItems: 'center', gap: '5px', fontSize: '12px', color: '#4A5568', margin: '8px 0' },
-  estDetails: { display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#4A5568', marginTop: '12px', borderTop: '1px solid #EDF2F7', paddingTop: '10px' },
-  cardapioBadge: { marginLeft: 'auto', fontSize: '11px', color: '#10B981', display: 'flex', alignItems: 'center', gap: '2px', backgroundColor: '#ECFDF5', padding: '2px 6px', borderRadius: '4px' },
-  filtersPanel: { padding: '10px 20px', backgroundColor: '#fff', margin: '10px', borderRadius: '8px' },
-  filterLabel: { marginRight: '20px', fontSize: '14px', color: '#4A5568', cursor: 'pointer' },
-  loadingState: { padding: '60px', textAlign: 'center', color: '#718096' }
+    wrapper: { position: 'relative', minHeight: '100vh' },
+    container: { backgroundColor: '#F8FAFC', minHeight: '100vh', fontFamily: 'sans-serif' },
+    header: { backgroundColor: '#0F3460', padding: '20px', borderBottomLeftRadius: '20px', borderBottomRightRadius: '20px' },
+    headerTop: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' },
+    logo: { margin: 0, fontSize: '24px' },
+    logoBlue: { color: '#fff' },
+    logoGreen: { color: '#10B981' },
+    locationSelector: { display: 'flex', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.1)', padding: '5px 10px', borderRadius: '10px' },
+    selectCity: { background: 'none', border: 'none', color: '#fff', outline: 'none' },
+    searchContainer: { display: 'flex', gap: '10px', backgroundColor: '#fff', padding: '10px', borderRadius: '12px' },
+    searchInput: { flex: 1, border: 'none', outline: 'none' },
+    filterButton: { backgroundColor: '#10B981', border: 'none', borderRadius: '8px', padding: '5px' },
+    categoriesContainer: { display: 'flex', gap: '10px', overflowX: 'auto', marginTop: '15px', paddingBottom: '5px' },
+    categoryButton: { border: 'none', padding: '8px 15px', borderRadius: '15px', color: '#fff', whiteSpace: 'nowrap' },
+    content: { padding: '20px' },
+    grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px' },
+    card: { backgroundColor: '#fff', borderRadius: '15px', overflow: 'hidden', boxShadow: '0 4px 15px rgba(0,0,0,0.08)', cursor: 'pointer' },
+    cardImage: { height: '160px', backgroundColor: '#eee', position: 'relative' },
+    imagemEstabelecimento: { width: '100%', height: '100%', objectFit: 'cover' },
+    imagePlaceholder: { height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '50px', color: '#ccc' },
+    statusBadge: { position: 'absolute', top: '10px', left: '10px', padding: '4px 10px', borderRadius: '6px', color: '#fff', fontSize: '11px', fontWeight: 'bold' },
+    cardBody: { padding: '15px' },
+    estNome: { margin: 0, fontSize: '17px', fontWeight: 'bold' },
+    estCategoria: { margin: '0', fontSize: '13px', color: '#718096' },
+    estDetails: { display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#4A5568', marginTop: '12px', borderTop: '1px solid #EDF2F7', paddingTop: '10px' },
+    bottomNav: { position: 'fixed', bottom: 0, width: '100%', height: '70px', backgroundColor: 'white', display: 'flex', justifyContent: 'space-around', alignItems: 'center', boxShadow: '0 -2px 10px rgba(0,0,0,0.05)', borderTop: '1px solid #eee', zIndex: 100 },
+    navItem: { display: 'flex', flexDirection: 'column', alignItems: 'center', fontSize: '12px', gap: '4px', color: '#94A3B8', cursor: 'pointer' },
+    headerSimples: { backgroundColor: '#0F3460', padding: '20px', color: 'white', textAlign: 'center', borderBottomLeftRadius: '20px', borderBottomRightRadius: '20px' },
+    containerInterno: { backgroundColor: '#F8FAFC', minHeight: '100vh' },
+    avatarLarge: { width: '80px', height: '80px', borderRadius: '40px', backgroundColor: '#E2E8F0', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '32px', color: '#0F3460', margin: '0 auto', fontWeight: 'bold' },
+    perfilInfoBox: { textAlign: 'center', marginBottom: '30px' },
+    btnPrincipal: { width: '100%', padding: '16px', backgroundColor: '#10B981', color: 'white', border: 'none', borderRadius: '12px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', cursor: 'pointer' },
+    btnSecundario: { width: '100%', padding: '14px', backgroundColor: 'transparent', color: '#EF4444', border: '1px solid #EF4444', borderRadius: '12px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', cursor: 'pointer', marginTop: '20px' },
+    enderecoResumo: { display: 'flex', alignItems: 'center', gap: '10px', padding: '15px', backgroundColor: '#fff', borderRadius: '12px', color: '#4A5568', fontSize: '14px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }
 };
 
 export default PaginaInicialCliente;
