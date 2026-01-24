@@ -1,88 +1,109 @@
 import React, { useState, useEffect } from 'react';
 import { Layout } from './Menu';
 import { db } from './firebase';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import { collection, getDocs } from 'firebase/firestore';
 
 const Dashboard = ({ user, isMobile }) => {
+  const [loading, setLoading] = useState(true);
+  const [dataFiltro, setDataFiltro] = useState(new Date().toISOString().split('T')[0]);
+  
   const [metrics, setMetrics] = useState({
-    faturamentoHoje: 0,
-    pedidosHoje: 0,
+    faturamentoPeriodo: 0,
+    pedidosPeriodo: 0,
     produtosAtivos: 0,
-    ticketMedio: 0,
-    statusLoja: 'Aberta',
     topProdutos: [],
-    vendasHoje: 0,
-    vendasOntem: 0,
+    vendasPeriodo: 0,
+    vendasAnterior: 0,
   });
 
   useEffect(() => {
-    if (user) {
-      fetchDashboardData();
-    }
-  }, [user]);
+    if (user) fetchDashboardData();
+  }, [user, dataFiltro]);
 
   const fetchDashboardData = async () => {
-    if (!user) return;
-
     try {
-      // Buscar pedidos do dia
-      const hoje = new Date();
-      hoje.setHours(0, 0, 0, 0);
+      setLoading(true);
       
-      const pedidosRef = collection(db, 'estabelecimentos', user.uid, 'pedidos');
-      const q = query(pedidosRef, where('dataPedido', '>=', hoje));
+      // 1. Pegar todos os pedidos da coleção raiz (sem filtros de query que falham)
+      const pedidosRef = collection(db, 'Pedidos');
+      const snap = await getDocs(pedidosRef);
       
-      const snapshot = await getDocs(q);
-      const pedidos = snapshot.docs.map(doc => doc.data());
-      
-      // Calcular métricas
-      const faturamentoHoje = pedidos.reduce((sum, pedido) => sum + (pedido.total || 0), 0);
-      const pedidosHoje = pedidos.length;
-      const ticketMedio = pedidosHoje > 0 ? faturamentoHoje / pedidosHoje : 0;
+      console.log("Total bruto no banco:", snap.size);
 
-      // Buscar produtos ativos
-      const produtosRef = collection(db, 'estabelecimentos', user.uid, 'cardapio');
-      const produtosSnapshot = await getDocs(produtosRef);
-      const produtosAtivos = produtosSnapshot.docs.filter(doc => doc.data().ativo !== false).length;
+      // 2. Definir as janelas de tempo para o filtro JS
+      const [ano, mes, dia] = dataFiltro.split('-').map(Number);
+      const inicioDia = new Date(ano, mes - 1, dia, 0, 0, 0).getTime();
+      const fimDia = new Date(ano, mes - 1, dia, 23, 59, 59, 999).getTime();
 
-      // Top produtos (simulação)
-      const topProdutos = [
-        { nome: 'Pizza Calabresa', vendas: 45 },
-        { nome: 'Hambúrguer Artesanal', vendas: 38 },
-        { nome: 'Coca-Cola 2L', vendas: 32 },
-        { nome: 'Batata Frita', vendas: 28 },
-        { nome: 'Sorvete', vendas: 25 },
-      ];
+      const ontem = new Date(ano, mes - 1, dia);
+      ontem.setDate(ontem.getDate() - 1);
+      const inicioOntem = new Date(ontem.setHours(0,0,0,0)).getTime();
+      const fimOntem = new Date(ontem.setHours(23,59,59,999)).getTime();
+
+      // 3. Função para converter qualquer formato de dataCriacao para Milissegundos
+      const parseData = (campo) => {
+        if (!campo) return 0;
+        if (campo.seconds) return campo.seconds * 1000; // Se for Timestamp
+        if (typeof campo === 'string') return new Date(campo).getTime(); // Se for String
+        if (campo instanceof Date) return campo.getTime(); // Se for Date objeto
+        return 0;
+      };
+
+      // 4. Filtragem Manual (JS Side) - Resolve o problema do tipo de dado
+      const todosPedidos = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      
+      const pedidosDia = todosPedidos.filter(p => {
+        const time = parseData(p.dataCriacao);
+        return time >= inicioDia && time <= fimDia;
+      });
+
+      const pedidosOntem = todosPedidos.filter(p => {
+        const time = parseData(p.dataCriacao);
+        return time >= inicioOntem && time <= fimOntem;
+      });
+
+      // 5. Produtos Ativos (Sua lógica que já funciona)
+      const snapProdutos = await getDocs(collection(db, 'estabelecimentos', user.uid, 'cardapio'));
+      const totalProdutosAtivos = snapProdutos.docs.filter(d => d.data().ativo !== false).length;
+
+      // 6. Cálculos das Métricas
+      const faturamentoPeriodo = pedidosDia.reduce((sum, p) => sum + (Number(p.pagamento?.total) || 0), 0);
+      const faturadoAnterior = pedidosOntem.reduce((sum, p) => sum + (Number(p.pagamento?.total) || 0), 0);
+      
+      // Top 5 Produtos
+      const contagem = {};
+      pedidosDia.forEach(p => {
+        p.itens?.forEach(item => {
+          contagem[item.nome] = (contagem[item.nome] || 0) + (Number(item.quantidade) || 1);
+        });
+      });
+
+      const top5 = Object.entries(contagem)
+        .map(([nome, vendas]) => ({ nome, vendas }))
+        .sort((a, b) => b.vendas - a.vendas)
+        .slice(0, 5);
 
       setMetrics({
-        faturamentoHoje,
-        pedidosHoje,
-        produtosAtivos,
-        ticketMedio,
-        statusLoja: 'Aberta',
-        topProdutos,
-        vendasHoje: faturamentoHoje,
-        vendasOntem: faturamentoHoje * 0.88, // Simulação
+        faturamentoPeriodo,
+        pedidosPeriodo: pedidosDia.length,
+        produtosAtivos: totalProdutosAtivos,
+        topProdutos: top5.length > 0 ? top5 : [{ nome: 'Sem vendas', vendas: 0 }],
+        vendasPeriodo: faturamentoPeriodo,
+        vendasAnterior: faturadoAnterior,
       });
+
     } catch (error) {
-      console.error('Erro ao buscar dados:', error);
+      console.error("Erro Dashboard:", error);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const MetricCard = ({ title, value, trend, icon, color = '#4FD1C5' }) => (
-    <div style={styles.metricCard}>
-      <div style={{ display: 'flex', alignItems: 'center', marginBottom: '15px' }}>
-        <span style={{ marginRight: '10px', fontSize: '20px' }}>{icon}</span>
-        <h3 style={styles.cardTitle}>{title}</h3>
-      </div>
-      <div style={{ ...styles.cardValue, color }}>{value}</div>
-      {trend && (
-        <div style={styles.cardTrend}>
-          <span style={{ color: trend.includes('↑') ? '#48BB78' : '#F56565' }}>{trend}</span> vs anterior
-        </div>
-      )}
-    </div>
-  );
+  const calcularTendencia = (atual, anterior) => {
+    if (anterior === 0) return atual > 0 ? '↑ 100%' : '0%';
+    const diff = ((atual - anterior) / anterior) * 100;
+    return `${diff >= 0 ? '↑' : '↓'} ${Math.abs(diff).toFixed(0)}%`;
+  };
 
   return (
     <Layout isMobile={isMobile}>
@@ -90,308 +111,90 @@ const Dashboard = ({ user, isMobile }) => {
         <div style={styles.headerSection}>
           <div>
             <h1 style={styles.pageTitle}>Dashboard - Visão Geral</h1>
-            <p style={styles.pageSubtitle}>
-              Bem-vindo, <strong style={{ color: '#4FD1C5' }}>{user?.email}</strong>
-            </p>
+            <p style={styles.pageSubtitle}>Filtrando pedidos de: <strong>{new Date(dataFiltro + 'T12:00:00').toLocaleDateString()}</strong></p>
           </div>
-          <div style={styles.headerRight}>
-            <div style={styles.statusBadge}>
-              <div style={{ 
-                width: '8px', 
-                height: '8px', 
-                borderRadius: '50%', 
-                backgroundColor: '#48BB78',
-                marginRight: '8px'
-              }}></div>
-              Loja {metrics.statusLoja}
-            </div>
-            <div style={styles.dateBadge}>
-              📅 {new Date().toLocaleDateString('pt-BR', { 
-                weekday: 'long', 
-                day: 'numeric', 
-                month: 'long' 
-              })}
-            </div>
-          </div>
+          <input type="date" value={dataFiltro} onChange={(e) => setDataFiltro(e.target.value)} style={styles.dateInput} />
         </div>
 
-        <div style={styles.cardsGrid}>
-          <MetricCard 
-            title="Faturamento Hoje" 
-            value={`R$ ${metrics.faturamentoHoje.toFixed(2)}`} 
-            trend="↑ 12%" 
-            icon="💰" 
-          />
-          <MetricCard 
-            title="Pedidos Hoje" 
-            value={metrics.pedidosHoje} 
-            trend="↑ 15%" 
-            icon="🛍️" 
-          />
-          <MetricCard 
-            title="Produtos Ativos" 
-            value={metrics.produtosAtivos} 
-            trend="+8 novos" 
-            icon="🍔" 
-          />
-          <MetricCard 
-            title="Ticket Médio" 
-            value={`R$ ${metrics.ticketMedio.toFixed(2)}`} 
-            trend="↑ 8%" 
-            icon="📊" 
-          />
-        </div>
+        {loading ? <div style={{textAlign: 'center', padding: '50px', color: '#4FD1C5'}}>Processando dados...</div> : (
+          <>
+            <div style={styles.cardsGrid}>
+              <MetricCard title="Faturamento" value={`R$ ${metrics.faturamentoPeriodo.toFixed(2)}`} trend={calcularTendencia(metrics.vendasPeriodo, metrics.vendasAnterior)} icon="💰" />
+              <MetricCard title="Pedidos" value={metrics.pedidosPeriodo} trend={calcularTendencia(metrics.pedidosPeriodo, 0)} icon="🛍️" />
+              <MetricCard title="Produtos Ativos" value={metrics.produtosAtivos} icon="🍔" />
+            </div>
 
-        <div style={styles.chartsGrid}>
-          {/* Gráfico de Vendas */}
-          <div style={styles.chartCard}>
-            <h3 style={styles.chartTitle}>📈 Vendas - Hoje vs Ontem</h3>
-            <div style={styles.chartContainer}>
-              <div style={styles.barChart}>
-                <div style={styles.barLabel}>Hoje</div>
-                <div style={styles.barWrapper}>
-                  <div style={{
-                    width: `${(metrics.vendasHoje / (metrics.vendasHoje + metrics.vendasOntem)) * 100}%`,
-                    backgroundColor: '#4FD1C5',
-                    height: '30px',
-                    borderRadius: '4px'
-                  }}></div>
-                </div>
-                <div style={styles.barValue}>R$ {metrics.vendasHoje.toFixed(2)}</div>
+            <div style={styles.chartsGrid}>
+              <div style={styles.chartCard}>
+                <h3 style={styles.chartTitle}>📈 Comparativo Hoje vs Ontem</h3>
+                <BarItem label="Selecionado" value={metrics.vendasPeriodo} total={metrics.vendasPeriodo + metrics.vendasAnterior} color="#4FD1C5" />
+                <BarItem label="Anterior" value={metrics.vendasAnterior} total={metrics.vendasPeriodo + metrics.vendasAnterior} color="#718096" />
               </div>
-              <div style={styles.barChart}>
-                <div style={styles.barLabel}>Ontem</div>
-                <div style={styles.barWrapper}>
-                  <div style={{
-                    width: `${(metrics.vendasOntem / (metrics.vendasHoje + metrics.vendasOntem)) * 100}%`,
-                    backgroundColor: '#718096',
-                    height: '30px',
-                    borderRadius: '4px'
-                  }}></div>
-                </div>
-                <div style={styles.barValue}>R$ {metrics.vendasOntem.toFixed(2)}</div>
+              <div style={styles.chartCard}>
+                <h3 style={styles.chartTitle}>🏆 Top 5 Vendidos</h3>
+                {metrics.topProdutos.map((p, i) => (
+                  <RankingItem key={i} index={i} produto={p} maxVendas={metrics.topProdutos[0].vendas} />
+                ))}
               </div>
             </div>
-          </div>
-
-          {/* Ranking de Produtos */}
-          <div style={styles.chartCard}>
-            <h3 style={styles.chartTitle}>🏆 Top 5 Produtos</h3>
-            <div style={styles.rankingList}>
-              {metrics.topProdutos.map((produto, index) => (
-                <div key={index} style={styles.rankingItem}>
-                  <div style={styles.rankingPosition}>{index + 1}</div>
-                  <div style={styles.rankingInfo}>
-                    <div style={styles.rankingName}>{produto.nome}</div>
-                    <div style={styles.rankingSales}>{produto.vendas} vendas</div>
-                  </div>
-                  <div style={styles.rankingBar}>
-                    <div style={{
-                      width: `${(produto.vendas / metrics.topProdutos[0].vendas) * 100}%`,
-                      backgroundColor: index === 0 ? '#F6E05E' : 
-                                       index === 1 ? '#CBD5E0' : 
-                                       index === 2 ? '#A0AEC0' : '#718096',
-                      height: '6px',
-                      borderRadius: '3px'
-                    }}></div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Status do Sistema */}
-        <div style={styles.systemStatus}>
-          <h3 style={styles.chartTitle}>🔧 Status do Sistema</h3>
-          <div style={styles.statusGrid}>
-            <div style={styles.statusItem}>
-              <div style={styles.statusIcon}>✅</div>
-              <div style={styles.statusText}>Firebase Conectado</div>
-            </div>
-            <div style={styles.statusItem}>
-              <div style={styles.statusIcon}>✅</div>
-              <div style={styles.statusText}>Impressora Online</div>
-            </div>
-            <div style={styles.statusItem}>
-              <div style={styles.statusIcon}>✅</div>
-              <div style={styles.statusText}>Sistema Online</div>
-            </div>
-            <div style={styles.statusItem}>
-              <div style={styles.statusIcon}>🔄</div>
-              <div style={styles.statusText}>Entregadores: 3 online</div>
-            </div>
-          </div>
-        </div>
+          </>
+        )}
       </div>
     </Layout>
   );
 };
 
+// Componentes internos curtos
+const MetricCard = ({ title, value, trend, icon }) => (
+  <div style={styles.metricCard}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}><span>{icon}</span><span style={styles.cardTitle}>{title}</span></div>
+    <div style={styles.cardValue}>{value}</div>
+    {trend && <div style={styles.cardTrend}>{trend} vs anterior</div>}
+  </div>
+);
+
+const BarItem = ({ label, value, total, color }) => (
+  <div style={styles.barChart}>
+    <span style={styles.barLabel}>{label}</span>
+    <div style={styles.barWrapper}><div style={{ width: `${total > 0 ? (value / total) * 100 : 0}%`, backgroundColor: color, height: '100%', borderRadius: '4px' }} /></div>
+    <span style={styles.barValue}>R${value.toFixed(2)}</span>
+  </div>
+);
+
+const RankingItem = ({ index, produto, maxVendas }) => (
+  <div style={styles.rankingItem}>
+    <span style={styles.rankingPosition}>{index + 1}</span>
+    <div style={{ flex: 1 }}>
+      <div style={styles.rankingName}>{produto.nome}</div>
+      <div style={styles.rankingBar}><div style={{ width: `${maxVendas > 0 ? (produto.vendas / maxVendas) * 100 : 0}%`, backgroundColor: '#4FD1C5', height: '100%' }} /></div>
+    </div>
+    <span style={styles.rankingSales}>{produto.vendas} un</span>
+  </div>
+);
+
 const styles = {
-  container: { maxWidth: '1200px', margin: '0 auto', width: '100%' },
-  headerSection: { 
-    display: 'flex', 
-    justifyContent: 'space-between', 
-    alignItems: 'center',
-    marginBottom: '30px', 
-    paddingBottom: '20px', 
-    borderBottom: '1px solid rgba(79, 209, 197, 0.08)' 
-  },
-  headerRight: {
-    display: 'flex',
-    gap: '12px',
-    alignItems: 'center'
-  },
-  pageTitle: { color: '#4FD1C5', fontSize: '26px', marginBottom: '8px' },
-  pageSubtitle: { color: '#81E6D9', opacity: 0.8 },
-  dateBadge: { 
-    backgroundColor: 'rgba(79, 209, 197, 0.08)', 
-    color: '#81E6D9', 
-    padding: '8px 16px', 
-    borderRadius: '20px', 
-    border: '1px solid rgba(79, 209, 197, 0.15)',
-    fontSize: '14px'
-  },
-  statusBadge: {
-    backgroundColor: 'rgba(72, 187, 120, 0.1)',
-    color: '#48BB78',
-    padding: '8px 16px',
-    borderRadius: '20px',
-    border: '1px solid rgba(72, 187, 120, 0.2)',
-    fontSize: '14px',
-    display: 'flex',
-    alignItems: 'center'
-  },
-  cardsGrid: { 
-    display: 'grid', 
-    gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', 
-    gap: '20px',
-    marginBottom: '30px'
-  },
-  metricCard: { 
-    background: 'rgba(0, 35, 40, 0.6)', 
-    padding: '22px', 
-    borderRadius: '12px', 
-    border: '1px solid rgba(79, 209, 197, 0.12)',
-    transition: 'all 0.3s ease'
-  },
-  cardTitle: { color: '#81E6D9', fontSize: '14px', margin: 0 },
-  cardValue: { fontSize: '28px', fontWeight: '700', margin: '10px 0' },
-  cardTrend: { fontSize: '13px', color: '#A0AEC0' },
-  chartsGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))',
-    gap: '20px',
-    marginBottom: '30px'
-  },
-  chartCard: {
-    background: 'rgba(0, 35, 40, 0.6)',
-    padding: '20px',
-    borderRadius: '12px',
-    border: '1px solid rgba(79, 209, 197, 0.12)'
-  },
-  chartTitle: {
-    color: '#4FD1C5',
-    fontSize: '16px',
-    marginBottom: '20px',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px'
-  },
-  chartContainer: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '15px'
-  },
-  barChart: {
-    display: 'grid',
-    gridTemplateColumns: '80px 1fr 100px',
-    gap: '15px',
-    alignItems: 'center'
-  },
-  barLabel: {
-    color: '#A0AEC0',
-    fontSize: '14px'
-  },
-  barWrapper: {
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    borderRadius: '4px',
-    overflow: 'hidden'
-  },
-  barValue: {
-    color: '#81E6D9',
-    fontSize: '14px',
-    textAlign: 'right'
-  },
-  rankingList: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '12px'
-  },
-  rankingItem: {
-    display: 'grid',
-    gridTemplateColumns: '30px 1fr 100px',
-    gap: '12px',
-    alignItems: 'center',
-    padding: '10px',
-    backgroundColor: 'rgba(0, 0, 0, 0.2)',
-    borderRadius: '8px'
-  },
-  rankingPosition: {
-    width: '30px',
-    height: '30px',
-    backgroundColor: 'rgba(79, 209, 197, 0.1)',
-    borderRadius: '50%',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    color: '#4FD1C5',
-    fontWeight: 'bold'
-  },
-  rankingInfo: {
-    display: 'flex',
-    flexDirection: 'column'
-  },
-  rankingName: {
-    color: '#81E6D9',
-    fontSize: '14px'
-  },
-  rankingSales: {
-    color: '#A0AEC0',
-    fontSize: '12px'
-  },
-  rankingBar: {
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    borderRadius: '3px',
-    overflow: 'hidden'
-  },
-  systemStatus: {
-    background: 'rgba(0, 35, 40, 0.6)',
-    padding: '20px',
-    borderRadius: '12px',
-    border: '1px solid rgba(79, 209, 197, 0.12)'
-  },
-  statusGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-    gap: '15px'
-  },
-  statusItem: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-    padding: '15px',
-    backgroundColor: 'rgba(0, 0, 0, 0.2)',
-    borderRadius: '8px'
-  },
-  statusIcon: {
-    fontSize: '20px'
-  },
-  statusText: {
-    color: '#81E6D9',
-    fontSize: '14px'
-  }
+  container: { padding: '20px', maxWidth: '1200px', margin: '0 auto' },
+  headerSection: { display: 'flex', justifyContent: 'space-between', marginBottom: '30px', alignItems: 'center' },
+  dateInput: { backgroundColor: '#002328', border: '1px solid #4FD1C5', color: '#4FD1C5', padding: '10px', borderRadius: '8px' },
+  cardsGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '20px', marginBottom: '30px' },
+  metricCard: { background: 'rgba(0,35,40,0.6)', padding: '20px', borderRadius: '12px', border: '1px solid rgba(79,209,197,0.1)' },
+  cardTitle: { color: '#81E6D9', fontSize: '14px' },
+  cardValue: { fontSize: '24px', fontWeight: 'bold', color: '#4FD1C5', margin: '10px 0' },
+  cardTrend: { fontSize: '12px', color: '#A0AEC0' },
+  chartsGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '20px' },
+  chartCard: { background: 'rgba(0,35,40,0.6)', padding: '20px', borderRadius: '12px' },
+  chartTitle: { color: '#4FD1C5', marginBottom: '20px', fontSize: '16px' },
+  barChart: { display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' },
+  barLabel: { width: '80px', fontSize: '12px', color: '#A0AEC0' },
+  barWrapper: { flex: 1, height: '20px', backgroundColor: '#001a1d', borderRadius: '4px' },
+  barValue: { width: '80px', fontSize: '12px', color: '#4FD1C5', textAlign: 'right' },
+  rankingItem: { display: 'flex', gap: '15px', alignItems: 'center', marginBottom: '15px' },
+  rankingPosition: { width: '25px', color: '#4FD1C5', fontWeight: 'bold' },
+  rankingName: { fontSize: '13px', color: '#FFF' },
+  rankingBar: { height: '4px', backgroundColor: '#001a1d', marginTop: '4px' },
+  rankingSales: { fontSize: '12px', color: '#A0AEC0' },
+  pageTitle: { color: '#4FD1C5', fontSize: '22px' },
+  pageSubtitle: { color: '#A0AEC0', fontSize: '14px' }
 };
 
 export default Dashboard;

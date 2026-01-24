@@ -162,6 +162,12 @@ const PaginaInicialCliente = () => {
             <select value={cidade} onChange={(e) => setCidade(e.target.value)} style={styles.selectCity}>
               <option value="Araraquara">Araraquara, SP</option>
               <option value="São Carlos">São Carlos, SP</option>
+              <option value="São Simão">São Simão, SP</option>
+              <option value="Ribeirão Preto">Ribeirão Preto, SP</option>
+              <option value="Mogi Guaçu">Mogi Guaçu, SP</option>
+              <option value="Mogi Mirim">Mogi Mirim, SP</option>
+              <option value="Campinas">Campinas, SP</option>
+              <option value="Poços de Caldas">Poços de Caldas, MG</option>
             </select>
           </div>
         </div>

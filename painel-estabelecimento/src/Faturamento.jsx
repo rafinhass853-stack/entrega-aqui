@@ -3,73 +3,68 @@ import { Layout } from './Menu';
 import { db } from './firebase';
 import { 
   collection, 
-  onSnapshot, 
   query, 
   where, 
-  orderBy,
-  getDocs
+  getDocs,
+  orderBy
 } from 'firebase/firestore';
 
 const Faturamento = ({ user, isMobile }) => {
   const [periodo, setPeriodo] = useState('hoje');
+  const [loading, setLoading] = useState(true);
   const [dadosFaturamento, setDadosFaturamento] = useState({
     faturamentoBruto: 0,
     taxasEntrega: 0,
     comissoesPlataformas: 0,
     faturamentoLiquido: 0,
-    formasPagamento: {
-      pix: 0,
-      cartao: 0,
-      dinheiro: 0
-    },
+    formasPagamento: { pix: 0, cartao: 0, dinheiro: 0 },
     transacoes: []
   });
 
   useEffect(() => {
-    fetchFaturamentoData();
+    if (user) {
+      fetchFaturamentoData();
+    }
   }, [user, periodo]);
 
   const fetchFaturamentoData = async () => {
-    if (!user) return;
-
     try {
-      // Simulação de dados
+      setLoading(true);
       const hoje = new Date();
-      const ontem = new Date(hoje);
-      ontem.setDate(hoje.getDate() - 1);
-      
-      let dataInicio, dataFim;
-      
+      let dataInicio = new Date();
+      let dataFim = new Date();
+
+      // Configuração dos filtros de data
       switch (periodo) {
         case 'hoje':
-          dataInicio = new Date(hoje.setHours(0, 0, 0, 0));
-          dataFim = new Date(hoje.setHours(23, 59, 59, 999));
+          dataInicio.setHours(0, 0, 0, 0);
+          dataFim.setHours(23, 59, 59, 999);
           break;
         case 'ontem':
-          dataInicio = new Date(ontem.setHours(0, 0, 0, 0));
-          dataFim = new Date(ontem.setHours(23, 59, 59, 999));
+          dataInicio.setDate(hoje.getDate() - 1);
+          dataInicio.setHours(0, 0, 0, 0);
+          dataFim.setDate(hoje.getDate() - 1);
+          dataFim.setHours(23, 59, 59, 999);
           break;
         case 'semana':
-          dataInicio = new Date(hoje);
           dataInicio.setDate(hoje.getDate() - 7);
-          dataFim = new Date();
+          dataInicio.setHours(0, 0, 0, 0);
           break;
         case 'mes':
           dataInicio = new Date(hoje.getFullYear(), hoje.getMonth(), 1);
-          dataFim = new Date(hoje.getFullYear(), hoje.getMonth() + 1, 0, 23, 59, 59, 999);
           break;
-        default:
-          dataInicio = new Date(hoje.setHours(0, 0, 0, 0));
-          dataFim = new Date(hoje.setHours(23, 59, 59, 999));
       }
 
-      // Buscar pedidos no período
       const pedidosRef = collection(db, 'estabelecimentos', user.uid, 'pedidos');
+      
+      // Consulta Real no Firebase
+      // Nota: Pode ser necessário criar um índice no Firebase para dataPedido + status
       const q = query(
         pedidosRef,
         where('dataPedido', '>=', dataInicio),
         where('dataPedido', '<=', dataFim),
-        where('status', '==', 'entregue')
+        where('status', '==', 'entregue'),
+        orderBy('dataPedido', 'desc')
       );
 
       const snapshot = await getDocs(q);
@@ -78,40 +73,47 @@ const Faturamento = ({ user, isMobile }) => {
         ...doc.data()
       }));
 
-      // Calcular métricas
-      const faturamentoBruto = pedidos.reduce((sum, pedido) => sum + (pedido.total || 0), 0);
-      const taxasEntrega = pedidos.reduce((sum, pedido) => sum + (pedido.taxaEntrega || 0), 0);
-      const comissoesPlataformas = faturamentoBruto * 0.15; // 15% de comissão
-      const faturamentoLiquido = faturamentoBruto - comissoesPlataformas;
+      // Inicia contadores
+      let bruto = 0;
+      let entregas = 0;
+      let metodos = { pix: 0, cartao: 0, dinheiro: 0 };
 
-      // Formas de pagamento (simulação)
-      const formasPagamento = {
-        pix: faturamentoBruto * 0.4,
-        cartao: faturamentoBruto * 0.45,
-        dinheiro: faturamentoBruto * 0.15
-      };
+      pedidos.forEach(pedido => {
+        const valorTotal = pedido.pagamento?.total || 0;
+        const valorTaxa = pedido.pagamento?.taxaEntrega || 0;
+        const metodo = (pedido.pagamento?.metodo || 'dinheiro').toLowerCase();
 
-      // Transações recentes
-      const transacoes = pedidos.slice(0, 10).map(pedido => ({
-        id: pedido.id,
-        data: pedido.dataPedido?.toDate() || new Date(),
-        valor: pedido.total || 0,
-        formaPagamento: pedido.formaPagamento || 'cartao',
-        status: 'concluído',
-        pedidoNumero: pedido.numero || pedido.id.slice(-6)
-      }));
+        bruto += valorTotal;
+        entregas += valorTaxa;
+
+        // Mapeia os métodos de pagamento para as chaves do objeto
+        if (metodo.includes('pix')) metodos.pix += valorTotal;
+        else if (metodo.includes('cartao') || metodo.includes('cartão')) metodos.cartao += valorTotal;
+        else metodos.dinheiro += valorTotal;
+      });
+
+      const comissoes = bruto * 0.12; // Exemplo: 12% de comissão fixa
 
       setDadosFaturamento({
-        faturamentoBruto,
-        taxasEntrega,
-        comissoesPlataformas,
-        faturamentoLiquido,
-        formasPagamento,
-        transacoes
+        faturamentoBruto: bruto,
+        taxasEntrega: entregas,
+        comissoesPlataformas: comissoes,
+        faturamentoLiquido: bruto - comissoes,
+        formasPagamento: metodos,
+        transacoes: pedidos.map(p => ({
+          id: p.id,
+          data: p.dataPedido?.toDate() || new Date(),
+          valor: p.pagamento?.total || 0,
+          formaPagamento: p.pagamento?.metodo || 'cartão',
+          status: p.status,
+          pedidoNumero: p.numeroPedido || p.id.slice(-6)
+        }))
       });
 
     } catch (error) {
       console.error('Erro ao buscar faturamento:', error);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -122,483 +124,129 @@ const Faturamento = ({ user, isMobile }) => {
     }).format(valor);
   };
 
-  const periodos = [
-    { id: 'hoje', label: 'Hoje' },
-    { id: 'ontem', label: 'Ontem' },
-    { id: 'semana', label: 'Últimos 7 dias' },
-    { id: 'mes', label: 'Este mês' }
-  ];
-
-  const formasPagamento = [
-    { id: 'pix', label: 'PIX', cor: '#48BB78', icone: '🏦' },
-    { id: 'cartao', label: 'Cartão', cor: '#4299E1', icone: '💳' },
-    { id: 'dinheiro', label: 'Dinheiro', cor: '#F6E05E', icone: '💵' }
-  ];
-
   return (
     <Layout isMobile={isMobile}>
       <div style={styles.container}>
         <header style={styles.header}>
           <div>
             <h1 style={styles.title}>💰 Faturamento</h1>
-            <p style={styles.subtitle}>
-              Acompanhe seu fluxo de caixa e formas de pagamento
-            </p>
+            <p style={styles.subtitle}>Acompanhe seu fluxo de caixa real</p>
           </div>
           <div style={styles.filtros}>
-            {periodos.map(p => (
+            {['hoje', 'ontem', 'semana', 'mes'].map(p => (
               <button
-                key={p.id}
+                key={p}
                 style={{
                   ...styles.filtroBtn,
-                  ...(periodo === p.id ? styles.filtroBtnAtivo : {})
+                  ...(periodo === p ? styles.filtroBtnAtivo : {})
                 }}
-                onClick={() => setPeriodo(p.id)}
+                onClick={() => setPeriodo(p)}
               >
-                {p.label}
+                {p.charAt(0).toUpperCase() + p.slice(1)}
               </button>
             ))}
           </div>
         </header>
 
-        {/* Cards de Métricas */}
-        <div style={styles.metricasGrid}>
-          <div style={styles.metricaCard}>
-            <div style={styles.metricaHeader}>
-              <span style={styles.metricaIcone}>💰</span>
-              <h3 style={styles.metricaTitulo}>Faturamento Bruto</h3>
+        {loading ? (
+          <div style={{color: '#4FD1C5', textAlign: 'center', padding: '50px'}}>Calculando faturamento...</div>
+        ) : (
+          <>
+            <div style={styles.metricasGrid}>
+              <MetricaCard title="Faturamento Bruto" valor={formatarMoeda(dadosFaturamento.faturamentoBruto)} icone="💰" desc="Total das vendas" />
+              <MetricaCard title="Taxas de Entrega" valor={formatarMoeda(dadosFaturamento.taxasEntrega)} icone="🚚" desc="Total fretes" />
+              <MetricaCard title="Comissões" valor={formatarMoeda(dadosFaturamento.comissoesPlataformas)} icone="📱" desc="Estimativa taxas" />
+              <MetricaCard title="Faturamento Líquido" valor={formatarMoeda(dadosFaturamento.faturamentoLiquido)} icone="💎" desc="Lucro bruto aproximado" destaque />
             </div>
-            <div style={styles.metricaValor}>
-              {formatarMoeda(dadosFaturamento.faturamentoBruto)}
-            </div>
-            <div style={styles.metricaDesc}>
-              Valor total das vendas
-            </div>
-          </div>
 
-          <div style={styles.metricaCard}>
-            <div style={styles.metricaHeader}>
-              <span style={styles.metricaIcone}>🚚</span>
-              <h3 style={styles.metricaTitulo}>Taxas de Entrega</h3>
-            </div>
-            <div style={styles.metricaValor}>
-              {formatarMoeda(dadosFaturamento.taxasEntrega)}
-            </div>
-            <div style={styles.metricaDesc}>
-              Receita com entregas
-            </div>
-          </div>
-
-          <div style={styles.metricaCard}>
-            <div style={styles.metricaHeader}>
-              <span style={styles.metricaIcone}>📱</span>
-              <h3 style={styles.metricaTitulo}>Comissões</h3>
-            </div>
-            <div style={styles.metricaValor}>
-              {formatarMoeda(dadosFaturamento.comissoesPlataformas)}
-            </div>
-            <div style={styles.metricaDesc}>
-              Taxas de plataformas
-            </div>
-          </div>
-
-          <div style={{...styles.metricaCard, backgroundColor: 'rgba(72, 187, 120, 0.1)', borderColor: '#48BB78'}}>
-            <div style={styles.metricaHeader}>
-              <span style={styles.metricaIcone}>💎</span>
-              <h3 style={styles.metricaTitulo}>Faturamento Líquido</h3>
-            </div>
-            <div style={{...styles.metricaValor, color: '#48BB78'}}>
-              {formatarMoeda(dadosFaturamento.faturamentoLiquido)}
-            </div>
-            <div style={styles.metricaDesc}>
-              Receita líquida
-            </div>
-          </div>
-        </div>
-
-        {/* Gráfico de Formas de Pagamento */}
-        <div style={styles.chartSection}>
-          <h2 style={styles.sectionTitle}>💳 Formas de Pagamento</h2>
-          <div style={styles.chartContainer}>
-            <div style={styles.pieChart}>
-              {formasPagamento.map((forma, index) => {
-                const porcentagem = dadosFaturamento.faturamentoBruto > 0 
-                  ? (dadosFaturamento.formasPagamento[forma.id] / dadosFaturamento.faturamentoBruto) * 100 
-                  : 0;
-                
-                return (
-                  <div key={forma.id} style={styles.pieItem}>
-                    <div style={styles.pieLabel}>
-                      <span style={{color: forma.cor, marginRight: '8px'}}>{forma.icone}</span>
-                      <span>{forma.label}</span>
-                      <span style={styles.piePercent}>{porcentagem.toFixed(1)}%</span>
-                    </div>
-                    <div style={styles.pieBar}>
-                      <div 
-                        style={{
-                          width: `${porcentagem}%`,
-                          backgroundColor: forma.cor,
-                          height: '8px',
-                          borderRadius: '4px'
-                        }}
-                      ></div>
-                    </div>
-                    <div style={styles.pieValue}>
-                      {formatarMoeda(dadosFaturamento.formasPagamento[forma.id])}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-
-        {/* Fluxo de Caixa Detalhado */}
-        <div style={styles.fluxoSection}>
-          <h2 style={styles.sectionTitle}>📊 Fluxo de Caixa Detalhado</h2>
-          <div style={styles.fluxoGrid}>
-            <div style={styles.fluxoCard}>
-              <h3 style={styles.fluxoTitulo}>Entradas</h3>
-              <div style={styles.fluxoLista}>
-                <div style={styles.fluxoItem}>
-                  <span>Vendas Diretas</span>
-                  <span style={styles.fluxoValorPositivo}>
-                    {formatarMoeda(dadosFaturamento.faturamentoBruto * 0.6)}
-                  </span>
-                </div>
-                <div style={styles.fluxoItem}>
-                  <span>iFood/Ifood</span>
-                  <span style={styles.fluxoValorPositivo}>
-                    {formatarMoeda(dadosFaturamento.faturamentoBruto * 0.4)}
-                  </span>
-                </div>
-                <div style={styles.fluxoItem}>
-                  <span>Taxas de Entrega</span>
-                  <span style={styles.fluxoValorPositivo}>
-                    {formatarMoeda(dadosFaturamento.taxasEntrega)}
-                  </span>
-                </div>
-                <div style={styles.fluxoTotal}>
-                  <strong>Total Entradas</strong>
-                  <strong style={styles.fluxoValorPositivo}>
-                    {formatarMoeda(dadosFaturamento.faturamentoBruto + dadosFaturamento.taxasEntrega)}
-                  </strong>
-                </div>
+            <div style={styles.chartSection}>
+              <h2 style={styles.sectionTitle}>💳 Formas de Pagamento</h2>
+              <div style={styles.chartContainer}>
+                <ProgressBar label="PIX" valor={dadosFaturamento.formasPagamento.pix} total={dadosFaturamento.faturamentoBruto} cor="#48BB78" icone="🏦" />
+                <ProgressBar label="Cartão" valor={dadosFaturamento.formasPagamento.cartao} total={dadosFaturamento.faturamentoBruto} cor="#4299E1" icone="💳" />
+                <ProgressBar label="Dinheiro" valor={dadosFaturamento.formasPagamento.dinheiro} total={dadosFaturamento.faturamentoBruto} cor="#F6E05E" icone="💵" />
               </div>
             </div>
 
-            <div style={styles.fluxoCard}>
-              <h3 style={styles.fluxoTitulo}>Saídas</h3>
-              <div style={styles.fluxoLista}>
-                <div style={styles.fluxoItem}>
-                  <span>Comissões Plataformas</span>
-                  <span style={styles.fluxoValorNegativo}>
-                    -{formatarMoeda(dadosFaturamento.comissoesPlataformas)}
-                  </span>
+            <div style={styles.transacoesSection}>
+              <h2 style={styles.sectionTitle}>📋 Histórico do Período</h2>
+              <div style={styles.transacoesTable}>
+                <div style={styles.tableHeader}>
+                  <div>Hora</div><div>Pedido</div><div>Valor</div><div>Pagamento</div><div>Status</div>
                 </div>
-                <div style={styles.fluxoItem}>
-                  <span>Taxas Cartão</span>
-                  <span style={styles.fluxoValorNegativo}>
-                    -{formatarMoeda(dadosFaturamento.formasPagamento.cartao * 0.03)}
-                  </span>
-                </div>
-                <div style={styles.fluxoItem}>
-                  <span>Despesas Operacionais</span>
-                  <span style={styles.fluxoValorNegativo}>
-                    -{formatarMoeda(dadosFaturamento.faturamentoBruto * 0.3)}
-                  </span>
-                </div>
-                <div style={styles.fluxoTotal}>
-                  <strong>Total Saídas</strong>
-                  <strong style={styles.fluxoValorNegativo}>
-                    -{formatarMoeda(dadosFaturamento.comissoesPlataformas + (dadosFaturamento.formasPagamento.cartao * 0.03) + (dadosFaturamento.faturamentoBruto * 0.3))}
-                  </strong>
-                </div>
+                {dadosFaturamento.transacoes.map(t => (
+                  <div key={t.id} style={styles.tableRow}>
+                    <div>{t.data.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</div>
+                    <div>#{t.pedidoNumero}</div>
+                    <div style={{fontWeight: 'bold', color: '#4FD1C5'}}>{formatarMoeda(t.valor)}</div>
+                    <div>{t.formaPagamento}</div>
+                    <div style={{color: '#48BB78'}}>✓ Concluído</div>
+                  </div>
+                ))}
               </div>
             </div>
-          </div>
-        </div>
-
-        {/* Tabela de Transações */}
-        <div style={styles.transacoesSection}>
-          <h2 style={styles.sectionTitle}>📋 Transações Recentes</h2>
-          <div style={styles.transacoesTable}>
-            <div style={styles.tableHeader}>
-              <div style={styles.tableCol}>Data/Hora</div>
-              <div style={styles.tableCol}>Pedido</div>
-              <div style={styles.tableCol}>Valor</div>
-              <div style={styles.tableCol}>Pagamento</div>
-              <div style={styles.tableCol}>Status</div>
-            </div>
-            
-            {dadosFaturamento.transacoes.length === 0 ? (
-              <div style={styles.emptyTransacoes}>
-                <span>📊</span>
-                <p>Nenhuma transação encontrada no período</p>
-              </div>
-            ) : (
-              dadosFaturamento.transacoes.map(transacao => (
-                <div key={transacao.id} style={styles.tableRow}>
-                  <div style={styles.tableCol}>
-                    {transacao.data.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
-                  </div>
-                  <div style={styles.tableCol}>
-                    #{transacao.pedidoNumero}
-                  </div>
-                  <div style={styles.tableCol}>
-                    <strong>{formatarMoeda(transacao.valor)}</strong>
-                  </div>
-                  <div style={styles.tableCol}>
-                    <span style={{
-                      ...styles.pagamentoBadge,
-                      backgroundColor: transacao.formaPagamento === 'pix' ? 'rgba(72, 187, 120, 0.1)' :
-                                     transacao.formaPagamento === 'cartao' ? 'rgba(66, 153, 225, 0.1)' :
-                                     'rgba(246, 224, 94, 0.1)',
-                      color: transacao.formaPagamento === 'pix' ? '#48BB78' :
-                            transacao.formaPagamento === 'cartao' ? '#4299E1' :
-                            '#F6E05E'
-                    }}>
-                      {transacao.formaPagamento === 'pix' ? 'PIX' :
-                       transacao.formaPagamento === 'cartao' ? 'Cartão' : 'Dinheiro'}
-                    </span>
-                  </div>
-                  <div style={styles.tableCol}>
-                    <span style={styles.statusBadge}>
-                      ✅ {transacao.status}
-                    </span>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
+          </>
+        )}
       </div>
     </Layout>
   );
 };
 
+// Sub-componentes para organizar o código
+const MetricaCard = ({ title, valor, icone, desc, destaque }) => (
+  <div style={{...styles.metricaCard, ...(destaque ? {backgroundColor: 'rgba(72, 187, 120, 0.1)', borderColor: '#48BB78'} : {})}}>
+    <div style={styles.metricaHeader}>
+      <span>{icone}</span>
+      <h3 style={styles.metricaTitulo}>{title}</h3>
+    </div>
+    <div style={{...styles.metricaValor, ...(destaque ? {color: '#48BB78'} : {})}}>{valor}</div>
+    <div style={styles.metricaDesc}>{desc}</div>
+  </div>
+);
+
+const ProgressBar = ({ label, valor, total, cor, icone }) => {
+  const porcentagem = total > 0 ? (valor / total) * 100 : 0;
+  return (
+    <div style={styles.pieItem}>
+      <div style={styles.pieLabel}>
+        <span>{icone} {label}</span>
+        <span style={styles.piePercent}>{porcentagem.toFixed(1)}%</span>
+      </div>
+      <div style={styles.pieBar}>
+        <div style={{ width: `${porcentagem}%`, backgroundColor: cor, height: '8px', borderRadius: '4px', transition: 'width 0.5s' }}></div>
+      </div>
+      <div style={styles.pieValue}>{new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(valor)}</div>
+    </div>
+  );
+};
+
+// Estilos mantidos conforme sua base (com correções de flexibilidade)
 const styles = {
-  container: { maxWidth: '1200px', margin: '0 auto', width: '100%' },
-  header: { 
-    display: 'flex', 
-    justifyContent: 'space-between', 
-    alignItems: 'flex-start',
-    marginBottom: '30px', 
-    paddingBottom: '20px', 
-    borderBottom: '1px solid rgba(79, 209, 197, 0.08)',
-    flexWrap: 'wrap',
-    gap: '20px'
-  },
-  title: { color: '#4FD1C5', fontSize: '26px', marginBottom: '8px' },
+  container: { maxWidth: '1200px', margin: '0 auto', width: '100%', padding: '10px' },
+  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px', flexWrap: 'wrap', gap: '20px' },
+  title: { color: '#4FD1C5', fontSize: '26px' },
   subtitle: { color: '#81E6D9', opacity: 0.8 },
-  filtros: {
-    display: 'flex',
-    gap: '8px',
-    flexWrap: 'wrap'
-  },
-  filtroBtn: {
-    backgroundColor: 'rgba(0, 35, 40, 0.6)',
-    border: '1px solid rgba(79, 209, 197, 0.12)',
-    color: '#A0AEC0',
-    padding: '8px 16px',
-    borderRadius: '8px',
-    cursor: 'pointer',
-    fontSize: '14px'
-  },
-  filtroBtnAtivo: {
-    backgroundColor: '#4FD1C5',
-    color: '#00171A',
-    borderColor: '#4FD1C5'
-  },
-  metricasGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
-    gap: '20px',
-    marginBottom: '40px'
-  },
-  metricaCard: {
-    backgroundColor: 'rgba(0, 35, 40, 0.6)',
-    border: '1px solid rgba(79, 209, 197, 0.12)',
-    borderRadius: '12px',
-    padding: '20px'
-  },
-  metricaHeader: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '10px',
-    marginBottom: '15px'
-  },
-  metricaIcone: {
-    fontSize: '24px'
-  },
-  metricaTitulo: {
-    color: '#81E6D9',
-    fontSize: '16px',
-    margin: 0
-  },
-  metricaValor: {
-    color: '#4FD1C5',
-    fontSize: '28px',
-    fontWeight: 'bold',
-    marginBottom: '8px'
-  },
-  metricaDesc: {
-    color: '#A0AEC0',
-    fontSize: '14px'
-  },
-  chartSection: {
-    backgroundColor: 'rgba(0, 35, 40, 0.6)',
-    border: '1px solid rgba(79, 209, 197, 0.12)',
-    borderRadius: '12px',
-    padding: '30px',
-    marginBottom: '40px'
-  },
-  sectionTitle: {
-    color: '#4FD1C5',
-    fontSize: '20px',
-    marginBottom: '25px',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '10px'
-  },
-  chartContainer: {
-    padding: '20px'
-  },
-  pieChart: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '20px'
-  },
-  pieItem: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '8px'
-  },
-  pieLabel: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    color: '#81E6D9',
-    fontSize: '16px'
-  },
-  piePercent: {
-    color: '#4FD1C5',
-    fontWeight: 'bold'
-  },
-  pieBar: {
-    backgroundColor: 'rgba(255, 255, 255, 0.05)',
-    borderRadius: '4px',
-    overflow: 'hidden',
-    height: '8px'
-  },
-  pieValue: {
-    color: '#A0AEC0',
-    fontSize: '14px',
-    textAlign: 'right'
-  },
-  fluxoSection: {
-    marginBottom: '40px'
-  },
-  fluxoGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))',
-    gap: '30px'
-  },
-  fluxoCard: {
-    backgroundColor: 'rgba(0, 35, 40, 0.6)',
-    border: '1px solid rgba(79, 209, 197, 0.12)',
-    borderRadius: '12px',
-    padding: '25px'
-  },
-  fluxoTitulo: {
-    color: '#4FD1C5',
-    fontSize: '18px',
-    marginBottom: '20px'
-  },
-  fluxoLista: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '15px'
-  },
-  fluxoItem: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingBottom: '15px',
-    borderBottom: '1px solid rgba(79, 209, 197, 0.08)'
-  },
-  fluxoValorPositivo: {
-    color: '#48BB78',
-    fontWeight: 'bold'
-  },
-  fluxoValorNegativo: {
-    color: '#F56565',
-    fontWeight: 'bold'
-  },
-  fluxoTotal: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingTop: '15px',
-    borderTop: '2px solid rgba(79, 209, 197, 0.2)',
-    marginTop: '10px',
-    color: '#81E6D9',
-    fontSize: '16px'
-  },
-  transacoesSection: {
-    backgroundColor: 'rgba(0, 35, 40, 0.6)',
-    border: '1px solid rgba(79, 209, 197, 0.12)',
-    borderRadius: '12px',
-    padding: '30px',
-    overflow: 'hidden'
-  },
-  transacoesTable: {
-    overflowX: 'auto'
-  },
-  tableHeader: {
-    display: 'grid',
-    gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr',
-    gap: '20px',
-    padding: '15px 0',
-    borderBottom: '2px solid rgba(79, 209, 197, 0.2)',
-    color: '#4FD1C5',
-    fontWeight: 'bold',
-    fontSize: '14px',
-    minWidth: '800px'
-  },
-  tableRow: {
-    display: 'grid',
-    gridTemplateColumns: '1fr 1fr 1fr 1fr 1fr',
-    gap: '20px',
-    padding: '15px 0',
-    borderBottom: '1px solid rgba(79, 209, 197, 0.08)',
-    color: '#A0AEC0',
-    fontSize: '14px',
-    minWidth: '800px',
-    alignItems: 'center'
-  },
-  tableCol: {
-    display: 'flex',
-    alignItems: 'center'
-  },
-  pagamentoBadge: {
-    padding: '4px 12px',
-    borderRadius: '20px',
-    fontSize: '12px',
-    fontWeight: '600'
-  },
-  statusBadge: {
-    color: '#48BB78',
-    fontSize: '14px',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '5px'
-  },
-  emptyTransacoes: {
-    textAlign: 'center',
-    padding: '40px 20px',
-    color: '#A0AEC0'
-  }
+  filtros: { display: 'flex', gap: '8px' },
+  filtroBtn: { background: 'rgba(0, 35, 40, 0.6)', border: '1px solid rgba(79, 209, 197, 0.12)', color: '#A0AEC0', padding: '8px 16px', borderRadius: '8px', cursor: 'pointer' },
+  filtroBtnAtivo: { backgroundColor: '#4FD1C5', color: '#00171A' },
+  metricasGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '20px', marginBottom: '40px' },
+  metricaCard: { backgroundColor: 'rgba(0, 35, 40, 0.6)', border: '1px solid rgba(79, 209, 197, 0.12)', borderRadius: '12px', padding: '20px' },
+  metricaHeader: { display: 'flex', gap: '10px', marginBottom: '15px' },
+  metricaTitulo: { color: '#81E6D9', fontSize: '14px' },
+  metricaValor: { color: '#4FD1C5', fontSize: '24px', fontWeight: 'bold' },
+  metricaDesc: { color: '#A0AEC0', fontSize: '12px' },
+  chartSection: { backgroundColor: 'rgba(0, 35, 40, 0.6)', border: '1px solid rgba(79, 209, 197, 0.12)', borderRadius: '12px', padding: '25px', marginBottom: '40px' },
+  sectionTitle: { color: '#4FD1C5', fontSize: '18px', marginBottom: '20px' },
+  chartContainer: { display: 'flex', flexDirection: 'column', gap: '20px' },
+  pieItem: { display: 'flex', flexDirection: 'column', gap: '8px' },
+  pieLabel: { display: 'flex', justifyContent: 'space-between', color: '#81E6D9' },
+  piePercent: { color: '#4FD1C5', fontWeight: 'bold' },
+  pieBar: { backgroundColor: 'rgba(255, 255, 255, 0.05)', borderRadius: '4px', height: '8px' },
+  pieValue: { color: '#A0AEC0', fontSize: '12px', textAlign: 'right' },
+  transacoesSection: { backgroundColor: 'rgba(0, 35, 40, 0.6)', border: '1px solid rgba(79, 209, 197, 0.12)', borderRadius: '12px', padding: '20px' },
+  transacoesTable: { overflowX: 'auto' },
+  tableHeader: { display: 'grid', gridTemplateColumns: '0.8fr 1fr 1fr 1fr 1fr', gap: '10px', padding: '10px 0', borderBottom: '2px solid rgba(79, 209, 197, 0.2)', color: '#4FD1C5', fontWeight: 'bold', minWidth: '600px' },
+  tableRow: { display: 'grid', gridTemplateColumns: '0.8fr 1fr 1fr 1fr 1fr', gap: '10px', padding: '15px 0', borderBottom: '1px solid rgba(79, 209, 197, 0.08)', color: '#A0AEC0', minWidth: '600px' }
 };
 
 export default Faturamento;
