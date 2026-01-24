@@ -1,11 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { auth } from './firebase';
+
+// Importação dos Componentes de Tela
 import Dashboard from './Dashboard';
 import TelaLogin from './Telalogin';
 import Cardapio from './Cardapio';
 import Pedidos from './Pedidos';
-import Produtos from './Produtos';
+import FormasPagamento from './FormasPagamento'; // Arquivo renomeado
+import TaxaEntrega from './TaxaEntrega';         // Novo arquivo
 import Faturamento from './Faturamento';
 import Relatorios from './Relatorios';
 import MeuPerfil from './MeuPerfil';
@@ -44,7 +47,8 @@ export const Layout = ({ children, isMobile }) => {
       { id: 'dashboard', label: 'Dashboard', icon: '📊', path: '/dashboard' },
       { id: 'pedidos', label: 'Pedidos', icon: '🛍️', path: '/pedidos', badge: pedidosPendentes },
       { id: 'cardapio', label: 'Cardápio', icon: '📋', path: '/cardapio' },
-      { id: 'produtos', label: 'Produtos', icon: '🍔', path: '/produtos' },
+      { id: 'pagamentos', label: 'Pagamentos', icon: '💳', path: '/pagamentos' },
+      { id: 'taxas', label: 'Taxas de Entrega', icon: '📍', path: '/taxas' },
       { id: 'faturamento', label: 'Faturamento', icon: '💰', path: '/faturamento' },
       { id: 'relatorios', label: 'Relatórios', icon: '📈', path: '/relatorios' },
       { id: 'entregadores', label: 'Entregadores', icon: '🏍️', path: '/entregadores' },
@@ -53,9 +57,9 @@ export const Layout = ({ children, isMobile }) => {
     ];
 
     const quickActions = [
-      { id: 'novo-produto', label: 'Novo Produto', icon: '➕', action: () => navigate('/produtos') },
       { id: 'novo-pedido', label: 'Novo Pedido', icon: '📝', action: () => navigate('/pedidos') },
-      { id: 'novo-entregador', label: 'Novo Entregador', icon: '🏍️', action: () => navigate('/entregadores') },
+      { id: 'taxa-entrega', label: 'Taxas', icon: '📍', action: () => navigate('/taxas') },
+      { id: 'pagamentos-link', label: 'Pagamentos', icon: '💳', action: () => navigate('/pagamentos') },
     ];
 
     const handleLogout = async () => {
@@ -157,7 +161,7 @@ export const Layout = ({ children, isMobile }) => {
           </div>
 
           <div style={styles.quickActionsSection}>
-            <div style={styles.sectionTitle}>Ações Rápidas</div>
+            <div style={styles.sectionTitle}>Gestão Rápida</div>
             <div style={styles.quickActionsGrid}>
               {quickActions.map((action) => (
                 <button 
@@ -197,9 +201,9 @@ export const Layout = ({ children, isMobile }) => {
                 {auth.currentUser?.email?.charAt(0).toUpperCase() || 'U'}
               </div>
               <div>
-                <div style={styles.userName}>Usuário</div>
+                <div style={styles.userName}>Estabelecimento</div>
                 <div style={{color: '#81E6D9', fontSize: '11px'}}>
-                  {auth.currentUser?.email || 'admin@teste.com'}
+                  {auth.currentUser?.email || 'admin@entregaqui.com'}
                 </div>
               </div>
             </div>
@@ -241,7 +245,7 @@ export const Layout = ({ children, isMobile }) => {
   );
 };
 
-// Componente Principal Menu
+// Componente Principal de Rotas
 const Menu = () => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -288,16 +292,26 @@ const Menu = () => {
     <Router>
       <GlobalStyles />
       <Routes>
+        {/* Rota de Login */}
         <Route path="/login" element={!user ? <TelaLogin /> : <Navigate to="/dashboard" />} />
+        
+        {/* Rotas Protegidas */}
         <Route path="/dashboard" element={user ? <Dashboard user={user} isMobile={isMobile} /> : <Navigate to="/login" />} />
         <Route path="/pedidos" element={user ? <Pedidos user={user} isMobile={isMobile} /> : <Navigate to="/login" />} />
         <Route path="/cardapio" element={user ? <Cardapio user={user} isMobile={isMobile} /> : <Navigate to="/login" />} />
-        <Route path="/produtos" element={user ? <Produtos user={user} isMobile={isMobile} /> : <Navigate to="/login" />} />
+        
+        {/* Novas Rotas Solicitadas */}
+        <Route path="/pagamentos" element={user ? <FormasPagamento user={user} isMobile={isMobile} /> : <Navigate to="/login" />} />
+        <Route path="/taxas" element={user ? <TaxaEntrega user={user} isMobile={isMobile} /> : <Navigate to="/login" />} />
+        
+        {/* Demais Rotas */}
         <Route path="/faturamento" element={user ? <Faturamento user={user} isMobile={isMobile} /> : <Navigate to="/login" />} />
         <Route path="/relatorios" element={user ? <Relatorios user={user} isMobile={isMobile} /> : <Navigate to="/login" />} />
         <Route path="/entregadores" element={user ? <Entregadores user={user} isMobile={isMobile} /> : <Navigate to="/login" />} />
         <Route path="/perfil" element={user ? <MeuPerfil user={user} isMobile={isMobile} /> : <Navigate to="/login" />} />
         <Route path="/configuracoes" element={user ? <Configuracoes user={user} isMobile={isMobile} /> : <Navigate to="/login" />} />
+        
+        {/* Redirecionamentos */}
         <Route path="/" element={<Navigate to={user ? "/dashboard" : "/login"} />} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
