@@ -19,84 +19,193 @@ const useIsMobile = () => {
   return { isMobile, isTablet };
 };
 
-const Carrinho = ({ carrinho, estabelecimento, onVoltar, onAtualizarQuantidade, onRemoverItem, onIrParaCadastro }) => {
-  const { isMobile, isTablet } = useIsMobile();
-  
-  const calcularSubtotal = () => {
-    return carrinho.reduce((total, item) => {
-      const preco = parseFloat(item.precoBaseUnitario || item.preco) || 0;
-      return total + (preco * item.quantidade);
-    }, 0);
+// Helpers de preço (padroniza carrinho/checkout/painel)
+const toNumber = (v) => {
+  const n = Number(String(v ?? '').replace(',', '.'));
+  return Number.isFinite(n) ? n : 0;
+};
+
+const calcAdicionais = (item) => {
+  const grupos = Array.isArray(item?.escolhas) ? item.escolhas : [];
+  let total = 0;
+
+  grupos.forEach((g) => {
+    (g?.itens || []).forEach((op) => {
+      total += toNumber(op?.preco);
+    });
+  });
+
+  return total;
+};
+
+const calcItemUnitarioFinal = (item) => {
+  const base = toNumber(item?.precoBaseUnitario ?? item?.preco);
+  return base + calcAdicionais(item);
+};
+
+const calcItemTotal = (item) => {
+  const qtd = toNumber(item?.quantidade) || 1;
+  return calcItemUnitarioFinal(item) * qtd;
+};
+
+/**
+ * ✅ Regra de abertura:
+ * 1) Se o estabelecimento tiver booleano aberto (aberto/isOpen/statusAberto/open), usa ele.
+ * 2) Senão calcula por horário.
+ * 3) Se não tiver nada, assume ABERTO.
+ */
+const getStatusLoja = (estabelecimento) => {
+  const flagAberto =
+    estabelecimento?.aberto ??
+    estabelecimento?.isOpen ??
+    estabelecimento?.statusAberto ??
+    estabelecimento?.open;
+
+  if (typeof flagAberto === 'boolean') {
+    return {
+      aberto: flagAberto,
+      mensagem: flagAberto ? 'Aberto agora' : 'Fechado no momento',
+      cor: flagAberto ? '#10B981' : '#EF4444'
+    };
+  }
+
+  const parseHM = (str) => {
+    if (!str || typeof str !== 'string') return null;
+    const m = str.trim().match(/^(\d{1,2}):(\d{2})$/);
+    if (!m) return null;
+    const h = Number(m[1]);
+    const min = Number(m[2]);
+    if (Number.isNaN(h) || Number.isNaN(min)) return null;
+    return { h, min };
   };
+
+  const horarioStr =
+    estabelecimento?.horarioFuncionamento ||
+    estabelecimento?.horario ||
+    estabelecimento?.funcionamento ||
+    estabelecimento?.horarioAtendimento;
+
+  const ab = parseHM(estabelecimento?.horarioAbertura);
+  const fe = parseHM(estabelecimento?.horarioFechamento);
+
+  let abertura = ab;
+  let fechamento = fe;
+
+  if ((!abertura || !fechamento) && typeof horarioStr === 'string') {
+    const match = horarioStr.match(/(\d{1,2}:\d{2}).*?(\d{1,2}:\d{2})/);
+    if (match) {
+      abertura = parseHM(match[1]);
+      fechamento = parseHM(match[2]);
+    }
+  }
+
+  if (abertura && fechamento) {
+    const agora = new Date();
+
+    const inicio = new Date();
+    inicio.setHours(abertura.h, abertura.min, 0, 0);
+
+    const fim = new Date();
+    fim.setHours(fechamento.h, fechamento.min, 0, 0);
+
+    let aberto;
+    if (fim < inicio) {
+      aberto = agora >= inicio || agora <= fim;
+    } else {
+      aberto = agora >= inicio && agora <= fim;
+    }
+
+    return {
+      aberto,
+      mensagem: aberto ? 'Aberto agora' : 'Fechado no momento',
+      cor: aberto ? '#10B981' : '#EF4444'
+    };
+  }
+
+  return { aberto: true, mensagem: 'Aberto', cor: '#10B981' };
+};
+
+const Carrinho = ({
+  carrinho,
+  estabelecimento,
+  onVoltar,
+  onAtualizarQuantidade,
+  onRemoverItem,
+  onIrParaCadastro
+}) => {
+  const { isMobile, isTablet } = useIsMobile();
+
+  const calcularSubtotal = () =>
+    (Array.isArray(carrinho) ? carrinho : []).reduce((total, item) => total + calcItemTotal(item), 0);
 
   const calcularTotal = () => {
     const subtotal = calcularSubtotal();
-    const taxaEntrega = parseFloat(estabelecimento?.taxaEntrega) || 0;
+    const taxaEntrega = toNumber(estabelecimento?.taxaEntrega);
     return subtotal + taxaEntrega;
   };
 
   const styles = {
-    container: { 
-      backgroundColor: '#F8FAFC', 
-      minHeight: '100vh', 
+    container: {
+      backgroundColor: '#F8FAFC',
+      minHeight: '100vh',
       fontFamily: "'Inter', sans-serif",
       maxWidth: isMobile ? '100%' : isTablet ? '768px' : '1200px',
       margin: '0 auto'
     },
-    header: { 
-      backgroundColor: '#0F3460', 
-      padding: isMobile ? '18px' : '20px', 
-      position: 'sticky', 
-      top: 0, 
-      zIndex: 100, 
-      borderBottomLeftRadius: '24px', 
-      borderBottomRightRadius: '24px' 
+    header: {
+      backgroundColor: '#0F3460',
+      padding: isMobile ? '18px' : '20px',
+      position: 'sticky',
+      top: 0,
+      zIndex: 100,
+      borderBottomLeftRadius: '24px',
+      borderBottomRightRadius: '24px'
     },
-    headerContent: { 
-      display: 'flex', 
-      alignItems: 'center', 
-      gap: isMobile ? '12px' : '15px' 
+    headerContent: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: isMobile ? '12px' : '15px'
     },
-    backButton: { 
-      background: 'none', 
-      border: 'none', 
-      color: 'white', 
-      cursor: 'pointer', 
-      display: 'flex', 
-      alignItems: 'center', 
+    backButton: {
+      background: 'none',
+      border: 'none',
+      color: 'white',
+      cursor: 'pointer',
+      display: 'flex',
+      alignItems: 'center',
       gap: '8px',
       padding: '5px'
     },
-    headerTitle: { 
-      color: 'white', 
-      margin: 0, 
-      fontSize: isMobile ? '18px' : '20px', 
-      fontWeight: '700' 
+    headerTitle: {
+      color: 'white',
+      margin: 0,
+      fontSize: isMobile ? '18px' : '20px',
+      fontWeight: '700'
     },
-    content: { 
-      padding: isMobile ? '15px' : '20px', 
-      paddingBottom: isMobile ? '200px' : '180px' 
+    content: {
+      padding: isMobile ? '15px' : '20px',
+      paddingBottom: isMobile ? '200px' : '180px'
     },
-    storeInfo: { 
-      backgroundColor: 'white', 
-      padding: isMobile ? '15px' : '20px', 
-      borderRadius: '16px', 
-      marginBottom: '20px', 
+    storeInfo: {
+      backgroundColor: 'white',
+      padding: isMobile ? '15px' : '20px',
+      borderRadius: '16px',
+      marginBottom: '20px',
       boxShadow: '0 4px 12px rgba(0,0,0,0.05)',
       border: '1px solid #E2E8F0'
     },
-    storeName: { 
-      fontSize: isMobile ? '18px' : '20px', 
-      fontWeight: '700', 
-      color: '#0F3460', 
+    storeName: {
+      fontSize: isMobile ? '18px' : '20px',
+      fontWeight: '700',
+      color: '#0F3460',
       margin: '0 0 8px 0',
       display: 'flex',
       alignItems: 'center',
       gap: '10px'
     },
-    storeAddress: { 
-      color: '#64748B', 
-      fontSize: isMobile ? '12px' : '13px', 
+    storeAddress: {
+      color: '#64748B',
+      fontSize: isMobile ? '12px' : '13px',
       margin: 0,
       display: 'flex',
       alignItems: 'center',
@@ -112,128 +221,108 @@ const Carrinho = ({ carrinho, estabelecimento, onVoltar, onAtualizarQuantidade, 
       fontWeight: 'bold',
       marginLeft: '10px'
     },
-    addMaisButton: { 
-      width: '100%', 
-      padding: isMobile ? '14px' : '16px', 
-      borderRadius: '12px', 
-      border: '2px dashed #CBD5E1', 
-      backgroundColor: 'transparent', 
-      color: '#64748B', 
-      fontWeight: '600', 
-      cursor: 'pointer', 
-      marginBottom: '20px', 
-      display: 'flex', 
-      alignItems: 'center', 
-      justifyContent: 'center', 
+    addMaisButton: {
+      width: '100%',
+      padding: isMobile ? '14px' : '16px',
+      borderRadius: '12px',
+      border: '2px dashed #CBD5E1',
+      backgroundColor: 'transparent',
+      color: '#64748B',
+      fontWeight: '600',
+      cursor: 'pointer',
+      marginBottom: '20px',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
       gap: '8px',
       fontSize: isMobile ? '14px' : '16px',
-      transition: 'all 0.2s',
-      '&:hover': {
-        borderColor: '#10B981',
-        backgroundColor: '#F0FDF4'
-      }
+      transition: 'all 0.2s'
     },
-    itemList: { 
-      display: 'flex', 
-      flexDirection: 'column', 
-      gap: isMobile ? '10px' : '12px' 
+    itemList: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: isMobile ? '10px' : '12px'
     },
-    itemCard: { 
-      backgroundColor: 'white', 
-      padding: isMobile ? '12px' : '15px', 
-      borderRadius: '16px', 
+    itemCard: {
+      backgroundColor: 'white',
+      padding: isMobile ? '12px' : '15px',
+      borderRadius: '16px',
       boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
-      border: '1px solid #F1F5F9',
-      transition: 'transform 0.2s',
-      '&:hover': {
-        transform: 'translateY(-2px)',
-        boxShadow: '0 4px 12px rgba(0,0,0,0.08)'
-      }
+      border: '1px solid #F1F5F9'
     },
-    itemHeader: { 
-      display: 'flex', 
-      justifyContent: 'space-between', 
+    itemHeader: {
+      display: 'flex',
+      justifyContent: 'space-between',
       marginBottom: '10px',
       alignItems: 'flex-start',
       gap: '10px'
     },
-    itemPrice: { 
-      fontWeight: '700', 
+    itemPrice: {
+      fontWeight: '700',
       color: '#10B981',
       fontSize: isMobile ? '14px' : '16px',
       whiteSpace: 'nowrap'
     },
-    itemControls: { 
-      display: 'flex', 
-      justifyContent: 'space-between', 
-      alignItems: 'center', 
-      marginTop: '10px' 
+    itemControls: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginTop: '10px'
     },
-    quantidadeControls: { 
-      display: 'flex', 
-      alignItems: 'center', 
-      gap: isMobile ? '8px' : '12px', 
-      backgroundColor: '#F1F5F9', 
-      padding: '4px', 
-      borderRadius: '8px' 
+    quantidadeControls: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: isMobile ? '8px' : '12px',
+      backgroundColor: '#F1F5F9',
+      padding: '4px',
+      borderRadius: '8px'
     },
-    btnQtde: { 
-      width: isMobile ? '28px' : '32px', 
-      height: isMobile ? '28px' : '32px', 
-      border: 'none', 
-      borderRadius: '6px', 
-      backgroundColor: 'white', 
-      cursor: 'pointer', 
-      display: 'flex', 
-      alignItems: 'center', 
-      justifyContent: 'center', 
-      boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
-      transition: 'all 0.2s',
-      '&:hover': {
-        backgroundColor: '#F8FAFC'
-      },
-      '&:disabled': {
-        opacity: 0.5,
-        cursor: 'not-allowed'
-      }
+    btnQtde: {
+      width: isMobile ? '28px' : '32px',
+      height: isMobile ? '28px' : '32px',
+      border: 'none',
+      borderRadius: '6px',
+      backgroundColor: 'white',
+      cursor: 'pointer',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
     },
-    resumo: { 
-      position: 'fixed', 
-      bottom: 0, 
-      left: 0, 
-      right: 0, 
-      backgroundColor: 'white', 
-      padding: isMobile ? '15px' : '20px', 
-      borderTopLeftRadius: '24px', 
-      borderTopRightRadius: '24px', 
-      boxShadow: '0 -10px 20px rgba(0,0,0,0.05)', 
+    resumo: {
+      position: 'fixed',
+      bottom: 0,
+      left: 0,
+      right: 0,
+      backgroundColor: 'white',
+      padding: isMobile ? '15px' : '20px',
+      borderTopLeftRadius: '24px',
+      borderTopRightRadius: '24px',
+      boxShadow: '0 -10px 20px rgba(0,0,0,0.05)',
       zIndex: 1000,
       maxWidth: isMobile ? '100%' : isTablet ? '768px' : '1200px',
       margin: '0 auto'
     },
-    btnFinalizar: { 
-      width: '100%', 
-      backgroundColor: '#10B981', 
-      color: 'white', 
-      border: 'none', 
-      borderRadius: '12px', 
-      padding: isMobile ? '16px' : '18px', 
-      fontSize: isMobile ? '16px' : '18px', 
-      fontWeight: '700', 
-      cursor: 'pointer', 
-      marginTop: '15px', 
+    btnFinalizar: {
+      width: '100%',
+      backgroundColor: '#10B981',
+      color: 'white',
+      border: 'none',
+      borderRadius: '12px',
+      padding: isMobile ? '16px' : '18px',
+      fontSize: isMobile ? '16px' : '18px',
+      fontWeight: '700',
+      cursor: 'pointer',
+      marginTop: '15px',
       boxShadow: '0 4px 12px rgba(16, 185, 129, 0.3)',
-      transition: 'background-color 0.2s',
-      '&:hover': {
-        backgroundColor: '#0DA271'
-      },
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
       gap: '8px'
     },
+    btnFinalizarDisabled: { opacity: 0.7, cursor: 'not-allowed' },
     emptyState: {
-      textAlign: 'center', 
+      textAlign: 'center',
       padding: isMobile ? '60px 20px' : '100px 20px',
       maxWidth: '400px',
       margin: '0 auto'
@@ -287,7 +376,7 @@ const Carrinho = ({ carrinho, estabelecimento, onVoltar, onAtualizarQuantidade, 
     }
   };
 
-  if (carrinho.length === 0) {
+  if (!Array.isArray(carrinho) || carrinho.length === 0) {
     return (
       <div style={styles.container}>
         <header style={styles.header}>
@@ -315,22 +404,8 @@ const Carrinho = ({ carrinho, estabelecimento, onVoltar, onAtualizarQuantidade, 
     );
   }
 
-  const horarioFuncionamento = () => {
-    const now = new Date();
-    const hora = now.getHours();
-    const minuto = now.getMinutes();
-    
-    // Exemplo: verificar se está entre 18h e 23h
-    const aberto = hora >= 18 && hora < 23;
-    
-    return {
-      aberto,
-      mensagem: aberto ? 'Aberto agora' : 'Fechado no momento',
-      cor: aberto ? '#10B981' : '#EF4444'
-    };
-  };
-
-  const horario = horarioFuncionamento();
+  const status = getStatusLoja(estabelecimento);
+  const taxaEntregaNum = toNumber(estabelecimento?.taxaEntrega);
 
   return (
     <div style={styles.container}>
@@ -344,7 +419,7 @@ const Carrinho = ({ carrinho, estabelecimento, onVoltar, onAtualizarQuantidade, 
       </header>
 
       <div style={styles.content}>
-        {!horario.aberto && (
+        {!status.aberto && (
           <div style={styles.alertBox}>
             <AlertCircle size={isMobile ? 16 : 18} />
             <div>
@@ -356,14 +431,22 @@ const Carrinho = ({ carrinho, estabelecimento, onVoltar, onAtualizarQuantidade, 
 
         <div style={styles.storeInfo}>
           <h3 style={styles.storeName}>
-            {estabelecimento.cliente || 'Loja'}
-            <span style={{...styles.storeStatus, backgroundColor: `${horario.cor}20`, color: horario.cor}}>
-              {horario.aberto ? '🟢' : '🔴'} {horario.mensagem}
+            {estabelecimento?.cliente || 'Loja'}
+            <span
+              style={{
+                ...styles.storeStatus,
+                backgroundColor: `${status.cor}20`,
+                color: status.cor
+              }}
+            >
+              {status.aberto ? '🟢' : '🔴'} {status.mensagem}
             </span>
           </h3>
+
           <p style={styles.storeAddress}>
             <Package size={isMobile ? 12 : 14} />
-            {estabelecimento.endereco?.bairro || 'Araraquara'}, SP • 🚀 {estabelecimento.tempoEntrega || 30} min
+            {estabelecimento?.endereco?.bairro || 'Araraquara'}, SP • 🚀{' '}
+            {estabelecimento?.tempoEntrega || 30} min
           </p>
         </div>
 
@@ -376,40 +459,54 @@ const Carrinho = ({ carrinho, estabelecimento, onVoltar, onAtualizarQuantidade, 
             <div key={item.idUnico} style={styles.itemCard}>
               <div style={styles.itemHeader}>
                 <div style={{ flex: 1 }}>
-                  <div style={{display: 'flex', alignItems: 'flex-start', gap: '10px'}}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
                     {item.foto && (
-                      <div style={{
-                        width: '60px',
-                        height: '60px',
-                        borderRadius: '8px',
-                        overflow: 'hidden',
-                        flexShrink: 0
-                      }}>
-                        <img 
-                          src={item.foto} 
-                          alt={item.nome} 
-                          style={{width: '100%', height: '100%', objectFit: 'cover'}}
+                      <div
+                        style={{
+                          width: '60px',
+                          height: '60px',
+                          borderRadius: '8px',
+                          overflow: 'hidden',
+                          flexShrink: 0
+                        }}
+                      >
+                        <img
+                          src={item.foto}
+                          alt={item.nome}
+                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                         />
                       </div>
                     )}
-                    <div style={{flex: 1}}>
-                      <h4 style={{ 
-                        margin: 0, 
-                        color: '#0F3460', 
-                        fontSize: isMobile ? '14px' : '15px',
-                        lineHeight: 1.3
-                      }}>
+
+                    <div style={{ flex: 1 }}>
+                      <h4
+                        style={{
+                          margin: 0,
+                          color: '#0F3460',
+                          fontSize: isMobile ? '14px' : '15px',
+                          lineHeight: 1.3
+                        }}
+                      >
                         {item.nome}
                       </h4>
-                      {item.escolhas?.map((grupo, idx) => (
+
+                      {Array.isArray(item.escolhas) && item.escolhas.map((grupo, idx) => (
                         <div key={idx} style={styles.opcoesContainer}>
-                          <div style={{fontSize: '10px', color: '#94A3B8', fontWeight: 'bold', marginBottom: '2px'}}>
+                          <div
+                            style={{
+                              fontSize: '10px',
+                              color: '#94A3B8',
+                              fontWeight: 'bold',
+                              marginBottom: '2px'
+                            }}
+                          >
                             {grupo.grupoNome}:
                           </div>
-                          {grupo.itens.map((opcao, opIdx) => (
+                          {(grupo.itens || []).map((opcao, opIdx) => (
                             <div key={opIdx} style={styles.opcaoItem}>
-                              <span style={{color: '#10B981', fontWeight: 'bold'}}>+</span>
-                              {opcao.nome} {opcao.preco > 0 && `(R$ ${opcao.preco.toFixed(2)})`}
+                              <span style={{ color: '#10B981', fontWeight: 'bold' }}>+</span>
+                              {opcao.nome}{' '}
+                              {toNumber(opcao.preco) > 0 && `(R$ ${toNumber(opcao.preco).toFixed(2)})`}
                             </div>
                           ))}
                         </div>
@@ -417,52 +514,56 @@ const Carrinho = ({ carrinho, estabelecimento, onVoltar, onAtualizarQuantidade, 
                     </div>
                   </div>
                 </div>
+
                 <span style={styles.itemPrice}>
-                  R$ {((parseFloat(item.precoBaseUnitario || item.preco) || 0) * item.quantidade).toFixed(2)}
+                  R$ {calcItemTotal(item).toFixed(2)}
                 </span>
               </div>
-              
+
               <div style={styles.itemControls}>
-                <button 
-                  onClick={() => onRemoverItem(item.idUnico)} 
-                  style={{ 
-                    background: 'none', 
-                    border: 'none', 
-                    color: '#EF4444', 
-                    fontSize: isMobile ? '12px' : '13px', 
-                    cursor: 'pointer', 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    gap: '4px', 
+                <button
+                  onClick={() => onRemoverItem(item.idUnico)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#EF4444',
+                    fontSize: isMobile ? '12px' : '13px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
                     padding: '5px',
-                    borderRadius: '6px',
-                    transition: 'background-color 0.2s',
-                    '&:hover': {
-                      backgroundColor: '#FEF2F2'
-                    }
+                    borderRadius: '6px'
                   }}
                 >
                   <Trash2 size={isMobile ? 14 : 16} /> Remover
                 </button>
-                
+
                 <div style={styles.quantidadeControls}>
-                  <button 
+                  <button
                     onClick={() => onAtualizarQuantidade(item.idUnico, item.quantidade - 1)}
                     style={styles.btnQtde}
                     disabled={item.quantidade <= 1}
                   >
-                    <Minus size={isMobile ? 14 : 16} color={item.quantidade <= 1 ? "#CBD5E1" : "#0F3460"} />
+                    <Minus
+                      size={isMobile ? 14 : 16}
+                      color={item.quantidade <= 1 ? '#CBD5E1' : '#0F3460'}
+                    />
                   </button>
-                  <span style={{ 
-                    fontWeight: '700', 
-                    minWidth: '20px', 
-                    textAlign: 'center', 
-                    color: '#0F3460',
-                    fontSize: isMobile ? '14px' : '16px'
-                  }}>
+
+                  <span
+                    style={{
+                      fontWeight: '700',
+                      minWidth: '20px',
+                      textAlign: 'center',
+                      color: '#0F3460',
+                      fontSize: isMobile ? '14px' : '16px'
+                    }}
+                  >
                     {item.quantidade}
                   </span>
-                  <button 
+
+                  <button
                     onClick={() => onAtualizarQuantidade(item.idUnico, item.quantidade + 1)}
                     style={styles.btnQtde}
                   >
@@ -482,14 +583,14 @@ const Carrinho = ({ carrinho, estabelecimento, onVoltar, onAtualizarQuantidade, 
             R$ {calcularSubtotal().toFixed(2)}
           </span>
         </div>
+
         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px', alignItems: 'center' }}>
           <span style={{ color: '#64748B', fontSize: isMobile ? '13px' : '14px' }}>Taxa de entrega</span>
           <span style={{ fontWeight: '600', color: '#10B981', fontSize: isMobile ? '15px' : '16px' }}>
-            {parseFloat(estabelecimento.taxaEntrega) > 0 
-              ? `R$ ${parseFloat(estabelecimento.taxaEntrega).toFixed(2)}` 
-              : 'Grátis'}
+            {taxaEntregaNum > 0 ? `R$ ${taxaEntregaNum.toFixed(2)}` : 'Grátis'}
           </span>
         </div>
+
         <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #E2E8F0', paddingTop: '15px', alignItems: 'center' }}>
           <div>
             <div style={{ fontSize: isMobile ? '16px' : '18px', fontWeight: '800', color: '#0F3460' }}>Total</div>
@@ -501,12 +602,13 @@ const Carrinho = ({ carrinho, estabelecimento, onVoltar, onAtualizarQuantidade, 
             R$ {calcularTotal().toFixed(2)}
           </span>
         </div>
-        <button 
-          onClick={onIrParaCadastro} 
-          style={styles.btnFinalizar}
-          disabled={!horario.aberto}
+
+        <button
+          onClick={onIrParaCadastro}
+          style={{ ...styles.btnFinalizar, ...(status.aberto ? {} : styles.btnFinalizarDisabled) }}
+          disabled={!status.aberto}
         >
-          {horario.aberto ? (
+          {status.aberto ? (
             <>
               <ShoppingBag size={isMobile ? 20 : 22} />
               Finalizar Pedido
@@ -515,18 +617,20 @@ const Carrinho = ({ carrinho, estabelecimento, onVoltar, onAtualizarQuantidade, 
             'Aguardando Abertura'
           )}
         </button>
-        
-        {!horario.aberto && (
-          <div style={{
-            fontSize: '12px',
-            color: '#F59E0B',
-            textAlign: 'center',
-            marginTop: '10px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            gap: '5px'
-          }}>
+
+        {!status.aberto && (
+          <div
+            style={{
+              fontSize: '12px',
+              color: '#F59E0B',
+              textAlign: 'center',
+              marginTop: '10px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '5px'
+            }}
+          >
             <AlertCircle size={12} />
             Este estabelecimento está fechado no momento
           </div>

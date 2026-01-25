@@ -790,15 +790,19 @@ const PaginaInicialCliente = () => {
           onVoltar={() => setTelaAtual('home')} 
           onAbrirCarrinho={() => setTelaAtual('carrinho')} 
         />;
-      case 'carrinho': 
-        return <Carrinho 
-          carrinho={carrinho} 
-          onAtualizarQuantidade={atualizarQuantidade} 
-          onRemoverItem={removerItem} 
-          estabelecimento={estabelecimentoSelecionado} 
-          onVoltar={() => setTelaAtual('cardapio')} 
-          onIrParaCadastro={navegarParaCheckout} 
-        />;
+      case 'carrinho':
+  return (
+    <Carrinho
+      carrinho={carrinho}
+      setCarrinho={setCarrinho}   // ✅ ADICIONE ISSO
+      onAtualizarQuantidade={atualizarQuantidade}
+      onRemoverItem={removerItem}
+      estabelecimento={estabelecimentoSelecionado}
+      onVoltar={() => setTelaAtual('cardapio')}
+      onIrParaCadastro={navegarParaCheckout}
+    />
+  );
+
       case 'cadastro': 
         return <Cadastro 
           dadosCliente={dadosCliente} 
