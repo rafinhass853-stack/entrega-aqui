@@ -21,36 +21,6 @@ const Configuracoes = ({ user, isMobile }) => {
       { dia: 'sabado', aberto: true, inicio: '17:00', fim: '00:00' },
       { dia: 'domingo', aberto: true, inicio: '17:00', fim: '23:00' }
     ],
-    
-    // Raio de Entrega
-    raioEntrega: 5,
-    taxaEntregaBase: 5.00,
-    taxaPorKm: 2.00,
-    valorMinimoPedido: 15.00,
-    
-    // Taxas por Bairro
-    bairros: [
-      { nome: 'Centro', taxa: 5.00 }
-    ],
-    
-    // Impressão
-    impressoraAtiva: true,
-    impressoraNome: 'EPSON-TM-T20',
-    copiasCozinha: 1,
-    copiasBalcao: 1,
-    
-    // Notificações
-    notificacoes: {
-      novoPedido: true,
-      pedidoPronto: true,
-      entregadorChegou: true,
-      pagamentoConfirmado: true,
-      alertasEstoque: true
-    },
-    
-    // Sistema
-    tempoPreparoPadrao: 30,
-    tempoEntregaEstimado: 45,
     lojaAberta: true
   });
 
@@ -103,38 +73,6 @@ const Configuracoes = ({ user, isMobile }) => {
     setConfig(prev => ({ ...prev, horarios: novosHorarios }));
   };
 
-  const handleBairroChange = (index, field, value) => {
-    const novosBairros = [...config.bairros];
-    novosBairros[index][field] = value;
-    setConfig(prev => ({ ...prev, bairros: novosBairros }));
-  };
-
-  const adicionarBairro = () => {
-    setConfig(prev => ({
-      ...prev,
-      bairros: [...prev.bairros, { nome: '', taxa: 5.00 }]
-    }));
-  };
-
-  const removerBairro = (index) => {
-    const novosBairros = config.bairros.filter((_, i) => i !== index);
-    setConfig(prev => ({ ...prev, bairros: novosBairros }));
-  };
-
-  const handleNotificacaoChange = (campo, valor) => {
-    setConfig(prev => ({
-      ...prev,
-      notificacoes: { ...prev.notificacoes, [campo]: valor }
-    }));
-  };
-
-  const formatarMoeda = (valor) => {
-    return new Intl.NumberFormat('pt-BR', {
-      style: 'currency',
-      currency: 'BRL'
-    }).format(valor || 0);
-  };
-
   const diasDaSemana = [
     { key: 'segunda', label: 'Segunda-feira' },
     { key: 'terca', label: 'Terça-feira' },
@@ -151,7 +89,7 @@ const Configuracoes = ({ user, isMobile }) => {
         <header style={styles.header}>
           <div>
             <h1 style={styles.title}>⚙️ Configurações do Sistema</h1>
-            <p style={styles.subtitle}>Configure as regras de funcionamento do seu estabelecimento</p>
+            <p style={styles.subtitle}>Configure os horários de funcionamento do seu estabelecimento</p>
           </div>
         </header>
 
@@ -201,70 +139,11 @@ const Configuracoes = ({ user, isMobile }) => {
             </div>
           </div>
 
-          {/* Seção Logística */}
-          <div style={styles.section}>
-            <h2 style={styles.sectionTitle}>📍 Raio de Entrega e Taxas</h2>
-            <div style={styles.raioGrid}>
-              <div style={styles.raioCard}>
-                <div style={styles.inputGroup}>
-                  <label style={styles.label}>Raio de Entrega (km)</label>
-                  <input
-                    style={styles.input}
-                    type="number"
-                    value={config.raioEntrega}
-                    onChange={(e) => setConfig(prev => ({ ...prev, raioEntrega: parseFloat(e.target.value) }))}
-                  />
-                </div>
-                <div style={styles.inputGroup}>
-                  <label style={styles.label}>Taxa Base de Entrega</label>
-                  <input
-                    style={styles.input}
-                    type="number"
-                    value={config.taxaEntregaBase}
-                    onChange={(e) => setConfig(prev => ({ ...prev, taxaEntregaBase: parseFloat(e.target.value) }))}
-                  />
-                </div>
-              </div>
-              <div style={styles.calculoCard}>
-                <h4 style={styles.calculoTitle}>🧮 Simulação (3km)</h4>
-                <div style={styles.calculoTotal}>
-                  <strong>Estimativa Total:</strong>
-                  <strong>{formatarMoeda(config.taxaEntregaBase + (config.taxaPorKm * 2))}</strong>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Seção Bairros */}
-          <div style={styles.section}>
-            <h2 style={styles.sectionTitle}>🏘️ Taxas por Bairro</h2>
-            <div style={styles.bairrosContainer}>
-              {config.bairros.map((bairro, index) => (
-                <div key={index} style={styles.bairroRow}>
-                  <input
-                    style={styles.input}
-                    value={bairro.nome}
-                    onChange={(e) => handleBairroChange(index, 'nome', e.target.value)}
-                    placeholder="Nome do Bairro"
-                  />
-                  <input
-                    style={styles.input}
-                    type="number"
-                    value={bairro.taxa}
-                    onChange={(e) => handleBairroChange(index, 'taxa', parseFloat(e.target.value))}
-                  />
-                  <button type="button" style={styles.btnRemover} onClick={() => removerBairro(index)}>🗑️</button>
-                </div>
-              ))}
-              <button type="button" style={styles.btnAdicionar} onClick={adicionarBairro}>➕ Adicionar Bairro</button>
-            </div>
-          </div>
-
           {/* Ações Finais */}
           <div style={styles.actions}>
             <button type="button" style={styles.btnCancelar} onClick={() => window.location.reload()}>Cancelar</button>
             <button type="submit" style={styles.btnSalvar} disabled={loading}>
-              {loading ? 'Salvando...' : '💾 Salvar Configurações'}
+              {loading ? 'Salvando...' : '💾 Salvar Horários'}
             </button>
           </div>
         </form>
@@ -288,17 +167,7 @@ const styles = {
   horarioInputs: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' },
   inputGroup: { display: 'flex', flexDirection: 'column', gap: '5px' },
   label: { color: '#81E6D9', fontSize: '12px' },
-  input: { backgroundColor: 'rgba(0, 23, 26, 0.8)', border: '1px solid rgba(79, 209, 197, 0.2)', borderRadius: '6px', padding: '10px', color: '#fff' },
   inputTime: { backgroundColor: 'rgba(0, 23, 26, 0.8)', border: '1px solid rgba(79, 209, 197, 0.2)', borderRadius: '6px', padding: '8px', color: '#fff' },
-  raioGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' },
-  raioCard: { display: 'flex', flexDirection: 'column', gap: '15px' },
-  calculoCard: { backgroundColor: 'rgba(0, 0, 0, 0.2)', padding: '20px', borderRadius: '8px' },
-  calculoTitle: { color: '#4FD1C5', fontSize: '14px', marginBottom: '10px' },
-  calculoTotal: { display: 'flex', justifyContent: 'space-between', color: '#81E6D9', borderTop: '1px solid #222', paddingTop: '10px' },
-  bairrosContainer: { display: 'flex', flexDirection: 'column', gap: '10px' },
-  bairroRow: { display: 'grid', gridTemplateColumns: '2fr 1fr auto', gap: '10px' },
-  btnRemover: { background: 'none', border: 'none', cursor: 'pointer', fontSize: '18px' },
-  btnAdicionar: { background: 'rgba(79, 209, 197, 0.1)', color: '#4FD1C5', border: '1px dashed #4FD1C5', padding: '10px', borderRadius: '8px', cursor: 'pointer' },
   actions: { display: 'flex', justifyContent: 'flex-end', gap: '15px' },
   btnCancelar: { background: 'none', color: '#A0AEC0', border: '1px solid #444', padding: '10px 20px', borderRadius: '8px', cursor: 'pointer' },
   btnSalvar: { backgroundColor: '#4FD1C5', color: '#00171A', border: 'none', padding: '10px 30px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }

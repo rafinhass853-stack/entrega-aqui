@@ -23,12 +23,11 @@ const Cadastro = ({ onVoltar, onContinuar, dadosCliente: dadosIniciais, modoChec
     rua: dadosIniciais?.rua || '',
     numero: dadosIniciais?.numero || '',
     bairro: dadosIniciais?.bairro || '',
-    cidade: dadosIniciais?.cidade || 'Araraquara',
+    cidade: dadosIniciais?.cidade || '', // Removido o fixo 'Araraquara'
     telefone: dadosIniciais?.telefone || '',
     complemento: dadosIniciais?.complemento || ''
   });
 
-  // Máscara de Telefone (16) 99999-9999
   const formatarTelefone = (valor) => {
     const limpo = valor.replace(/\D/g, '');
     return limpo
@@ -42,7 +41,6 @@ const Cadastro = ({ onVoltar, onContinuar, dadosCliente: dadosIniciais, modoChec
     setDados({ ...dados, telefone: valorFormatado });
   };
 
-  // Busca automática ao digitar o telefone
   useEffect(() => {
     const telefoneLimpo = dados.telefone.replace(/\D/g, '');
     if (telefoneLimpo.length >= 10) {
@@ -79,8 +77,9 @@ const Cadastro = ({ onVoltar, onContinuar, dadosCliente: dadosIniciais, modoChec
   };
 
   const handleFinalizar = async () => {
-    if (!dados.nomeCompleto || !dados.telefone || !dados.rua || !dados.numero) {
-      alert("Por favor, preencha os campos obrigatórios (Telefone, Nome, Rua e Número).");
+    // Adicionada a validação da cidade
+    if (!dados.nomeCompleto || !dados.telefone || !dados.rua || !dados.numero || !dados.cidade) {
+      alert("Por favor, preencha todos os campos obrigatórios, incluindo a Cidade.");
       return;
     }
 
@@ -181,9 +180,16 @@ const Cadastro = ({ onVoltar, onContinuar, dadosCliente: dadosIniciais, modoChec
             </div>
           </div>
 
-          <div style={styles.inputGroup}>
-            <label style={styles.label}>Bairro</label>
-            <input type="text" value={dados.bairro} onChange={e => setDados({...dados, bairro: e.target.value})} style={styles.input} placeholder="Bairro..." />
+          {/* Grid para Bairro e Cidade lado a lado */}
+          <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px'}}>
+            <div style={styles.inputGroup}>
+              <label style={styles.label}>Bairro</label>
+              <input type="text" value={dados.bairro} onChange={e => setDados({...dados, bairro: e.target.value})} style={styles.input} placeholder="Bairro..." />
+            </div>
+            <div style={styles.inputGroup}>
+              <label style={styles.label}>Cidade</label>
+              <input type="text" value={dados.cidade} onChange={e => setDados({...dados, cidade: e.target.value})} style={styles.input} placeholder="Cidade..." />
+            </div>
           </div>
 
           <div style={styles.inputGroup}>
