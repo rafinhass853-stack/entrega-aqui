@@ -20,6 +20,12 @@ const Entregadores = ({ user, isMobile }) => {
   const [tabAtiva, setTabAtiva] = useState('lista');
   const [entregadorEditando, setEntregadorEditando] = useState(null);
   
+  const normalizeWhatsApp = (value) => {
+    const digits = String(value ?? '').replace(/\D/g, '');
+    if (!digits) return '';
+    return digits.startsWith('55') ? digits : `55${digits}`;
+  };
+
   const [novoEntregador, setNovoEntregador] = useState({
     nome: '',
     telefone: '',
@@ -437,7 +443,7 @@ const Entregadores = ({ user, isMobile }) => {
                           <h4 style={styles.entregadorNome}>{entregador.nome}</h4>
                           <div style={styles.entregadorContato}>
                             <a 
-                              href={`https://wa.me/55${entregador.telefone.replace(/\D/g, '')}`}
+                               href={`https://wa.me/${normalizeWhatsApp(entregador.telefone)}`}
                               target="_blank"
                               rel="noopener noreferrer"
                               style={styles.whatsappLink}
@@ -581,7 +587,7 @@ const Entregadores = ({ user, isMobile }) => {
                                 {entregador.veiculo} - {entregador.placa}
                               </div>
                               <a 
-                                href={`https://wa.me/55${entregador.telefone.replace(/\D/g, '')}`}
+                                href={`https://wa.me/${normalizeWhatsApp(entregador.telefone)}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 style={styles.whatsappLink}

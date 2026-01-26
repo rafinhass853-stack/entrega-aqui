@@ -1,51 +1,30 @@
 import React, { useState, useEffect } from 'react';
 import { Layout } from './Menu';
-import { db, auth, storage } from './firebase';
-import { 
-  doc, 
-  getDoc, 
-  updateDoc, 
-  serverTimestamp
+import { db, storage, auth } from './firebase';
+import {
+  doc, getDoc, updateDoc, serverTimestamp
 } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { updatePassword, reauthenticateWithCredential, EmailAuthProvider } from 'firebase/auth';
-
-// --- FUNÇÕES DE MÁSCARA ---
-const maskCNPJ = (value) => {
-  return value
-    .replace(/\D/g, '')
-    .replace(/^(\d{2})(\d)/, '$1.$2')
-    .replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3')
-    .replace(/\.(\d{3})(\d)/, '.$1/$2')
-    .replace(/(\d{4})(\d)/, '$1-$2')
-    .slice(0, 18);
-};
-
-const maskPhone = (value) => {
-  return value
-    .replace(/\D/g, '')
-    .replace(/^(\d{2})(\d)/, '($1) $2')
-    .replace(/(\d)(\d{4})$/, '$1-$2')
-    .slice(0, 15);
-};
-
-const maskCEP = (value) => {
-  return value
-    .replace(/\D/g, '')
-    .replace(/^(\d{2})(\d)/, '$1.$2')
-    .replace(/\.(\d{3})(\d)/, '.$1-$2')
-    .slice(0, 10);
-};
+import {
+  updatePassword, reauthenticateWithCredential, EmailAuthProvider,
+  updateEmail
+} from 'firebase/auth';
+import {
+  User, Mail, Phone, MapPin, Camera,
+  Lock, Save, Upload, AlertCircle,
+  Building, FileText, CheckCircle
+} from 'lucide-react';
 
 const MeuPerfil = ({ user, isMobile }) => {
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [mensagem, setMensagem] = useState({ tipo: '', texto: '' });
   
   const [perfil, setPerfil] = useState({
-    loginUsuario: '', 
+    loginUsuario: '',
     cnpj: '',
     whatsappFormatado: '',
-    loginEmail: user?.email || '',
+    loginEmail: '',
     endereco: {
       rua: '',
       numero: '',
@@ -54,13 +33,24 @@ const MeuPerfil = ({ user, isMobile }) => {
       estado: '',
       cep: ''
     },
-    fotoUrl: null
+    fotoUrl: null,
+    descricao: '',
+    horarioFuncionamento: {
+      segunda: { abre: '09:00', fecha: '18:00' },
+      terca: { abre: '09:00', fecha: '18:00' },
+      quarta: { abre: '09:00', fecha: '18:00' },
+      quinta: { abre: '09:00', fecha: '18:00' },
+      sexta: { abre: '09:00', fecha: '18:00' },
+      sabado: { abre: '09:00', fecha: '18:00' },
+      domingo: { abre: '09:00', fecha: '18:00' }
+    }
   });
 
   const [senhaAtual, setSenhaAtual] = useState('');
   const [novaSenha, setNovaSenha] = useState('');
   const [confirmarSenha, setConfirmarSenha] = useState('');
 
+  // Buscar perfil
   useEffect(() => {
     if (user) {
       fetchPerfil();
@@ -69,296 +59,825 @@ const MeuPerfil = ({ user, isMobile }) => {
 
   const fetchPerfil = async () => {
     try {
-      // Puxando da raiz do estabelecimento para garantir sincronia com o card do cliente
       const perfilRef = doc(db, 'estabelecimentos', user.uid);
       const perfilSnap = await getDoc(perfilRef);
       
       if (perfilSnap.exists()) {
         const data = perfilSnap.data();
-        setPerfil({
+        setPerfil(prev => ({
+          ...prev,
           loginUsuario: data.loginUsuario || '',
           cnpj: data.cnpj || '',
           whatsappFormatado: data.whatsappFormatado || '',
           loginEmail: data.loginEmail || user.email,
-          endereco: data.endereco || { rua: '', numero: '', bairro: '', cidade: '', estado: '', cep: '' },
-          fotoUrl: data.fotoUrl || null
-        });
+          endereco: data.endereco || prev.endereco,
+          fotoUrl: data.fotoUrl || null,
+          descricao: data.descricao || '',
+          horarioFuncionamento: data.horarioFuncionamento || prev.horarioFuncionamento
+        }));
       }
     } catch (error) {
       console.error('Erro ao buscar perfil:', error);
+      showMensagem('error', 'Erro ao carregar perfil');
+    }
+  };
+
+  // Funções de máscara
+  const maskCNPJ = (value) => {
+    return value
+      .replace(/\D/g, '')
+      .replace(/^(\d{2})(\d)/, '$1.$2')
+      .replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3')
+      .replace(/\.(\d{3})(\d)/, '.$1/$2')
+      .replace(/(\d{4})(\d)/, '$1-$2')
+      .slice(0, 18);
+  };
+
+  const maskPhone = (value) => {
+    return value
+      .replace(/\D/g, '')
+      .replace(/^(\d{2})(\d)/, '($1) $2')
+      .replace(/(\d)(\d{4})$/, '$1-$2')
+      .slice(0, 15);
+  };
+
+  const maskCEP = (value) => {
+    return value
+      .replace(/\D/g, '')
+      .replace(/^(\d{2})(\d)/, '$1.$2')
+      .replace(/\.(\d{3})(\d)/, '.$1-$2')
+      .slice(0, 10);
+  };
+
+  const showMensagem = (tipo, texto, tempo = 5000) => {
+    setMensagem({ tipo, texto });
+    setTimeout(() => setMensagem({ tipo: '', texto: '' }), tempo);
+  };
+
+  // Upload de imagem
+  const handleImageUpload = async (file) => {
+    if (!file || !user) return null;
+    
+    setUploading(true);
+    try {
+      const timestamp = Date.now();
+      const nomeArquivo = `perfil_${user.uid}_${timestamp}`;
+      const storageRef = ref(storage, `perfis/${user.uid}/${nomeArquivo}`);
+      
+      await uploadBytes(storageRef, file);
+      const url = await getDownloadURL(storageRef);
+      
+      setUploading(false);
+      return url;
+    } catch (error) {
+      console.error('Erro ao fazer upload:', error);
+      setUploading(false);
+      return null;
+    }
+  };
+
+  // Salvar perfil
+  const salvarPerfil = async (e) => {
+    e.preventDefault();
+    if (!user) return;
+    
+    setLoading(true);
+    
+    try {
+      // Upload de imagem se houver nova
+      let fotoUrl = perfil.fotoUrl;
+      if (perfil.fotoUrl instanceof File) {
+        fotoUrl = await handleImageUpload(perfil.fotoUrl);
+      }
+      
+      const perfilRef = doc(db, 'estabelecimentos', user.uid);
+      const dadosAtualizados = {
+        loginUsuario: perfil.loginUsuario.trim(),
+        cnpj: perfil.cnpj,
+        whatsappFormatado: perfil.whatsappFormatado,
+        whatsapp: perfil.whatsappFormatado.replace(/\D/g, ''),
+        loginEmail: perfil.loginEmail || user.email,
+        endereco: perfil.endereco,
+        fotoUrl: fotoUrl || perfil.fotoUrl,
+        descricao: perfil.descricao,
+        horarioFuncionamento: perfil.horarioFuncionamento,
+        atualizadoEm: serverTimestamp()
+      };
+      
+      await updateDoc(perfilRef, dadosAtualizados);
+      
+      showMensagem('success', 'Perfil atualizado com sucesso!');
+    } catch (error) {
+      console.error('Erro ao salvar perfil:', error);
+      showMensagem('error', 'Erro ao salvar perfil');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Alterar senha
+  const alterarSenha = async (e) => {
+    e.preventDefault();
+    
+    if (novaSenha !== confirmarSenha) {
+      showMensagem('error', 'As senhas não coincidem');
+      return;
+    }
+    
+    if (novaSenha.length < 6) {
+      showMensagem('error', 'A senha deve ter no mínimo 6 caracteres');
+      return;
+    }
+    
+    setLoading(true);
+    
+    try {
+      const credential = EmailAuthProvider.credential(
+        user.email,
+        senhaAtual
+      );
+      
+      await reauthenticateWithCredential(user, credential);
+      await updatePassword(user, novaSenha);
+      
+      setSenhaAtual('');
+      setNovaSenha('');
+      setConfirmarSenha('');
+      
+      showMensagem('success', 'Senha alterada com sucesso!');
+    } catch (error) {
+      console.error('Erro ao alterar senha:', error);
+      showMensagem('error', 'Erro ao alterar senha. Verifique a senha atual.');
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleImageChange = async (e) => {
-    const file = e.target.files[0];
-    if (!file || !user) return;
-
-    setUploading(true);
-    try {
-      const nomeArquivo = `perfil_${user.uid}_${Date.now()}`;
-      const storageRef = ref(storage, `perfis/${user.uid}/${nomeArquivo}`);
-      const uploadResult = await uploadBytes(storageRef, file);
-      const urlImagem = await getDownloadURL(uploadResult.ref);
-
-      // Atualiza o campo fotoUrl na raiz do estabelecimento
-      const perfilRef = doc(db, 'estabelecimentos', user.uid);
-      await updateDoc(perfilRef, {
-        fotoUrl: urlImagem,
-        ultimaAtualizacao: serverTimestamp()
-      });
-
-      setPerfil(prev => ({ ...prev, fotoUrl: urlImagem }));
-      alert('Foto de perfil atualizada!');
-    } catch (error) {
-      console.error('Erro ao fazer upload:', error);
-      alert('Erro ao carregar imagem');
-    } finally {
-      setUploading(false);
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    // Validar tipo e tamanho
+    const tiposPermitidos = ['image/jpeg', 'image/png', 'image/webp'];
+    const tamanhoMaximo = 5 * 1024 * 1024; // 5MB
+    
+    if (!tiposPermitidos.includes(file.type)) {
+      showMensagem('error', 'Formato de imagem inválido. Use JPG, PNG ou WebP.');
+      return;
     }
+    
+    if (file.size > tamanhoMaximo) {
+      showMensagem('error', 'Imagem muito grande. Tamanho máximo: 5MB');
+      return;
+    }
+    
+    setPerfil({ ...perfil, fotoUrl: file });
+    
+    // Preview
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      setPerfil(prev => ({ ...prev, fotoPreview: e.target.result }));
+    };
+    reader.readAsDataURL(file);
   };
 
-  const handleSalvarPerfil = async (e) => {
-    e.preventDefault();
-    if (!user) return;
+  const estados = [
+    'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO',
+    'MA', 'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI',
+    'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO'
+  ];
 
-    setLoading(true);
-    try {
-      const perfilRef = doc(db, 'estabelecimentos', user.uid);
-      
-      // Criamos um objeto limpo para salvar (sem caracteres na versão 'whatsapp' pura)
-      const payload = {
-        ...perfil,
-        whatsapp: perfil.whatsappFormatado.replace(/\D/g, ''),
-        ultimaAtualizacao: serverTimestamp()
-      };
-
-      await updateDoc(perfilRef, payload);
-      alert('Informações salvas com sucesso!');
-    } catch (error) {
-      console.error('Erro ao salvar:', error);
-      alert('Erro ao salvar dados');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleAlterarSenha = async (e) => {
-    e.preventDefault();
-    if (novaSenha !== confirmarSenha) return alert('As senhas não coincidem');
-
-    setLoading(true);
-    try {
-      const credential = EmailAuthProvider.credential(user.email, senhaAtual);
-      await reauthenticateWithCredential(user, credential);
-      await updatePassword(user, novaSenha);
-      alert('Senha alterada!');
-      setSenhaAtual(''); setNovaSenha(''); setConfirmarSenha('');
-    } catch (error) {
-      alert('Erro ao alterar senha. Verifique a senha atual.');
-    } finally {
-      setLoading(false);
+  const styles = {
+    container: { maxWidth: '1200px', margin: '0 auto', width: '100%' },
+    header: {
+      marginBottom: '30px',
+      paddingBottom: '20px',
+      borderBottom: '1px solid rgba(79, 209, 197, 0.08)'
+    },
+    title: { color: '#4FD1C5', fontSize: '28px', marginBottom: '8px' },
+    subtitle: { color: '#81E6D9', opacity: 0.8 },
+    mensagem: (tipo) => ({
+      padding: '15px 20px',
+      borderRadius: '8px',
+      marginBottom: '20px',
+      backgroundColor: tipo === 'success' ? 'rgba(16, 185, 129, 0.1)' :
+                     tipo === 'error' ? 'rgba(245, 101, 101, 0.1)' :
+                     'rgba(79, 209, 197, 0.1)',
+      border: `1px solid ${tipo === 'success' ? '#10B98140' :
+              tipo === 'error' ? '#F5656540' : '#4FD1C540'}`,
+      color: tipo === 'success' ? '#10B981' :
+             tipo === 'error' ? '#F56565' : '#4FD1C5',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '10px'
+    }),
+    grid: {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))',
+      gap: '30px',
+      alignItems: 'start'
+    },
+    card: {
+      backgroundColor: 'rgba(0, 35, 40, 0.6)',
+      border: '1px solid rgba(79, 209, 197, 0.12)',
+      borderRadius: '12px',
+      padding: '30px'
+    },
+    sectionTitle: {
+      color: '#4FD1C5',
+      fontSize: '18px',
+      marginBottom: '25px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '10px'
+    },
+    fotoContainer: {
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      gap: '20px',
+      marginBottom: '30px'
+    },
+    fotoWrapper: {
+      width: '200px',
+      height: '200px',
+      borderRadius: '50%',
+      overflow: 'hidden',
+      border: '3px solid rgba(79, 209, 197, 0.3)',
+      backgroundColor: 'rgba(0, 0, 0, 0.2)',
+      position: 'relative'
+    },
+    foto: {
+      width: '100%',
+      height: '100%',
+      objectFit: 'cover'
+    },
+    fotoPlaceholder: {
+      width: '100%',
+      height: '100%',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'rgba(79, 209, 197, 0.15)',
+      color: '#4FD1C5',
+      fontSize: '60px',
+      fontWeight: 'bold'
+    },
+    fotoActions: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '10px',
+      width: '100%',
+      alignItems: 'center'
+    },
+    btnUpload: {
+      backgroundColor: '#4FD1C5',
+      color: '#00171A',
+      border: 'none',
+      padding: '12px 24px',
+      borderRadius: '8px',
+      cursor: 'pointer',
+      fontWeight: 'bold',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '8px',
+      width: '100%',
+      maxWidth: '250px',
+      justifyContent: 'center',
+      '&:disabled': {
+        opacity: 0.6,
+        cursor: 'not-allowed'
+      }
+    },
+    fotoHint: {
+      color: '#A0AEC0',
+      fontSize: '12px',
+      textAlign: 'center',
+      marginTop: '10px'
+    },
+    form: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '20px'
+    },
+    formGrid: {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
+      gap: '20px'
+    },
+    inputGroup: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '8px'
+    },
+    label: {
+      color: '#81E6D9',
+      fontSize: '14px',
+      fontWeight: '500',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '8px'
+    },
+    input: {
+      backgroundColor: 'rgba(0, 23, 26, 0.8)',
+      border: '1px solid rgba(79, 209, 197, 0.2)',
+      borderRadius: '8px',
+      padding: '12px',
+      color: '#fff',
+      fontSize: '14px',
+      outline: 'none',
+      transition: 'border-color 0.2s',
+      '&:focus': {
+        borderColor: '#4FD1C5'
+      }
+    },
+    textarea: {
+      backgroundColor: 'rgba(0, 23, 26, 0.8)',
+      border: '1px solid rgba(79, 209, 197, 0.2)',
+      borderRadius: '8px',
+      padding: '12px',
+      color: '#fff',
+      fontSize: '14px',
+      minHeight: '100px',
+      resize: 'vertical',
+      outline: 'none',
+      transition: 'border-color 0.2s',
+      '&:focus': {
+        borderColor: '#4FD1C5'
+      }
+    },
+    select: {
+      backgroundColor: 'rgba(0, 23, 26, 0.8)',
+      border: '1px solid rgba(79, 209, 197, 0.2)',
+      borderRadius: '8px',
+      padding: '12px',
+      color: '#fff',
+      fontSize: '14px',
+      cursor: 'pointer',
+      outline: 'none'
+    },
+    hint: {
+      color: '#A0AEC0',
+      fontSize: '12px',
+      marginTop: '4px'
+    },
+    formActions: {
+      display: 'flex',
+      justifyContent: 'flex-end',
+      marginTop: '20px'
+    },
+    btnSalvar: {
+      backgroundColor: '#4FD1C5',
+      color: '#00171A',
+      border: 'none',
+      padding: '14px 40px',
+      borderRadius: '8px',
+      fontWeight: 'bold',
+      cursor: 'pointer',
+      fontSize: '16px',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '10px',
+      '&:disabled': {
+        opacity: 0.6,
+        cursor: 'not-allowed'
+      }
+    },
+    btnAlterarSenha: {
+      backgroundColor: 'rgba(72, 187, 120, 0.1)',
+      color: '#48BB78',
+      border: '1px solid rgba(72, 187, 120, 0.2)',
+      padding: '14px 40px',
+      borderRadius: '8px',
+      fontWeight: 'bold',
+      cursor: 'pointer',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '10px',
+      '&:disabled': {
+        opacity: 0.6,
+        cursor: 'not-allowed'
+      }
+    },
+    horarioGrid: {
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+      gap: '15px',
+      marginTop: '15px'
+    },
+    diaHorario: {
+      backgroundColor: 'rgba(0, 0, 0, 0.2)',
+      padding: '15px',
+      borderRadius: '8px'
+    },
+    diaLabel: {
+      color: '#81E6D9',
+      fontSize: '14px',
+      fontWeight: '600',
+      marginBottom: '10px',
+      display: 'block'
+    },
+    timeInputs: {
+      display: 'flex',
+      gap: '10px',
+      alignItems: 'center'
+    },
+    timeInput: {
+      flex: 1,
+      backgroundColor: 'rgba(0, 23, 26, 0.8)',
+      border: '1px solid rgba(79, 209, 197, 0.2)',
+      borderRadius: '6px',
+      padding: '8px',
+      color: '#fff',
+      fontSize: '14px',
+      textAlign: 'center'
     }
   };
 
   return (
     <Layout isMobile={isMobile}>
       <div style={styles.container}>
+        {/* Cabeçalho */}
         <header style={styles.header}>
           <h1 style={styles.title}>👤 Meu Perfil</h1>
-          <p style={styles.subtitle}>Gerencie as informações que os clientes visualizam</p>
+          <p style={styles.subtitle}>
+            Gerencie as informações do seu estabelecimento
+          </p>
         </header>
 
+        {/* Mensagem de Feedback */}
+        {mensagem.texto && (
+          <div style={styles.mensagem(mensagem.tipo)}>
+            {mensagem.tipo === 'success' ? <CheckCircle /> : <AlertCircle />}
+            {mensagem.texto}
+          </div>
+        )}
+
         <div style={styles.grid}>
-          {/* Foto do Perfil */}
-          <div style={styles.perfilSection}>
-            <h2 style={styles.sectionTitle}>🖼️ Foto do Estabelecimento</h2>
-            <div style={styles.fotoContainer}>
-              <div style={styles.fotoWrapper}>
-                {perfil.fotoUrl ? (
-                  <img src={perfil.fotoUrl} alt="Logo" style={styles.foto} />
-                ) : (
-                  <div style={styles.fotoPlaceholder}>{perfil.loginUsuario?.charAt(0) || 'S'}</div>
-                )}
-              </div>
+          {/* Coluna Esquerda: Foto e Informações Básicas */}
+          <div>
+            {/* Foto do Perfil */}
+            <div style={styles.card}>
+              <h2 style={styles.sectionTitle}>
+                <Camera size={20} />
+                Foto do Estabelecimento
+              </h2>
               
-              <div style={styles.fotoActions}>
-                <label style={styles.btnUpload}>
-                  {uploading ? 'Enviando...' : '📷 Alterar Foto'}
-                  <input type="file" accept="image/*" onChange={handleImageChange} style={{ display: 'none' }} disabled={uploading} />
-                </label>
+              <div style={styles.fotoContainer}>
+                <div style={styles.fotoWrapper}>
+                  {perfil.fotoUrl instanceof File && perfil.fotoPreview ? (
+                    <img src={perfil.fotoPreview} alt="Preview" style={styles.foto} />
+                  ) : perfil.fotoUrl ? (
+                    <img src={perfil.fotoUrl} alt="Logo" style={styles.foto} />
+                  ) : (
+                    <div style={styles.fotoPlaceholder}>
+                      {perfil.loginUsuario?.charAt(0)?.toUpperCase() || 'E'}
+                    </div>
+                  )}
+                </div>
+                
+                <div style={styles.fotoActions}>
+                  <label htmlFor="fotoUpload" style={styles.btnUpload}>
+                    {uploading ? (
+                      <>
+                        <div className="spinner" style={{ width: '20px', height: '20px', borderWidth: '2px' }}></div>
+                        Enviando...
+                      </>
+                    ) : (
+                      <>
+                        <Camera size={18} />
+                        Alterar Foto
+                      </>
+                    )}
+                  </label>
+                  <input
+                    id="fotoUpload"
+                    type="file"
+                    accept="image/*"
+                    onChange={handleImageChange}
+                    style={{ display: 'none' }}
+                    disabled={uploading}
+                  />
+                  
+                  <p style={styles.fotoHint}>
+                    Recomendado: 400x400px • Máximo: 5MB
+                  </p>
+                </div>
               </div>
-              <p style={styles.fotoHint}>Recomendado: 400x400px (Sincroniza com App do Cliente)</p>
+            </div>
+
+            {/* Horário de Funcionamento */}
+            <div style={{ ...styles.card, marginTop: '30px' }}>
+              <h2 style={styles.sectionTitle}>
+                🕒 Horário de Funcionamento
+              </h2>
+              
+              <div style={styles.horarioGrid}>
+                {Object.entries(perfil.horarioFuncionamento).map(([dia, horario]) => (
+                  <div key={dia} style={styles.diaHorario}>
+                    <label style={styles.diaLabel}>
+                      {dia.charAt(0).toUpperCase() + dia.slice(1)}
+                    </label>
+                    <div style={styles.timeInputs}>
+                      <input
+                        type="time"
+                        value={horario.abre}
+                        onChange={(e) => setPerfil(prev => ({
+                          ...prev,
+                          horarioFuncionamento: {
+                            ...prev.horarioFuncionamento,
+                            [dia]: { ...horario, abre: e.target.value }
+                          }
+                        }))}
+                        style={styles.timeInput}
+                      />
+                      <span style={{ color: '#A0AEC0' }}>às</span>
+                      <input
+                        type="time"
+                        value={horario.fecha}
+                        onChange={(e) => setPerfil(prev => ({
+                          ...prev,
+                          horarioFuncionamento: {
+                            ...prev.horarioFuncionamento,
+                            [dia]: { ...horario, fecha: e.target.value }
+                          }
+                        }))}
+                        style={styles.timeInput}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
 
-          {/* Informações da Empresa */}
-          <div style={styles.infoSection}>
-            <h2 style={styles.sectionTitle}>🏪 Informações da Empresa</h2>
-            <form onSubmit={handleSalvarPerfil} style={styles.form}>
-              <div style={styles.formGrid}>
+          {/* Coluna Direita: Informações da Empresa */}
+          <div>
+            <div style={styles.card}>
+              <h2 style={styles.sectionTitle}>
+                <Building size={20} />
+                Informações da Empresa
+              </h2>
+              
+              <form onSubmit={salvarPerfil} style={styles.form}>
+                <div style={styles.formGrid}>
+                  <div style={styles.inputGroup}>
+                    <label style={styles.label}>
+                      <User size={16} />
+                      Nome do Estabelecimento *
+                    </label>
+                    <input
+                      style={styles.input}
+                      value={perfil.loginUsuario}
+                      onChange={(e) => setPerfil({ ...perfil, loginUsuario: e.target.value })}
+                      placeholder="Ex: Restaurante Sabor Caseiro"
+                      required
+                    />
+                  </div>
+
+                  <div style={styles.inputGroup}>
+                    <label style={styles.label}>
+                      <FileText size={16} />
+                      CNPJ
+                    </label>
+                    <input
+                      style={styles.input}
+                      placeholder="00.000.000/0000-00"
+                      value={perfil.cnpj}
+                      onChange={(e) => setPerfil({ ...perfil, cnpj: maskCNPJ(e.target.value) })}
+                    />
+                    <div style={styles.hint}>Opcional</div>
+                  </div>
+
+                  <div style={styles.inputGroup}>
+                    <label style={styles.label}>
+                      <Phone size={16} />
+                      WhatsApp / Telefone *
+                    </label>
+                    <input
+                      style={styles.input}
+                      placeholder="(11) 99999-9999"
+                      value={perfil.whatsappFormatado}
+                      onChange={(e) => setPerfil({ ...perfil, whatsappFormatado: maskPhone(e.target.value) })}
+                      required
+                    />
+                    <div style={styles.hint}>Usado para contato com clientes</div>
+                  </div>
+
+                  <div style={styles.inputGroup}>
+                    <label style={styles.label}>
+                      <Mail size={16} />
+                      E-mail de Login *
+                    </label>
+                    <input
+                      style={styles.input}
+                      value={perfil.loginEmail}
+                      disabled
+                    />
+                    <div style={styles.hint}>
+                      Contate o suporte para alterar o e-mail
+                    </div>
+                  </div>
+                </div>
+
+                {/* Descrição */}
                 <div style={styles.inputGroup}>
-                  <label style={styles.label}>Nome do Estabelecimento *</label>
-                  <input
-                    style={styles.input}
-                    value={perfil.loginUsuario}
-                    onChange={(e) => setPerfil({...perfil, loginUsuario: e.target.value})}
-                    required
+                  <label style={styles.label}>Descrição do Estabelecimento</label>
+                  <textarea
+                    style={styles.textarea}
+                    value={perfil.descricao}
+                    onChange={(e) => setPerfil({ ...perfil, descricao: e.target.value })}
+                    placeholder="Descreva seu estabelecimento, especialidades, etc."
+                    maxLength={500}
                   />
+                  <div style={{ ...styles.hint, textAlign: 'right' }}>
+                    {perfil.descricao.length}/500 caracteres
+                  </div>
                 </div>
 
-                <div style={styles.inputGroup}>
-                  <label style={styles.label}>CNPJ</label>
-                  <input
-                    style={styles.input}
-                    placeholder="00.000.000/0000-00"
-                    value={perfil.cnpj}
-                    onChange={(e) => setPerfil({...perfil, cnpj: maskCNPJ(e.target.value)})}
-                  />
+                {/* Endereço */}
+                <h3 style={{ ...styles.sectionTitle, fontSize: '16px', marginTop: '30px' }}>
+                  <MapPin size={18} />
+                  Endereço
+                </h3>
+                
+                <div style={styles.formGrid}>
+                  <div style={styles.inputGroup}>
+                    <label style={styles.label}>CEP</label>
+                    <input
+                      style={styles.input}
+                      placeholder="00.000-000"
+                      value={perfil.endereco.cep}
+                      onChange={(e) => setPerfil({
+                        ...perfil,
+                        endereco: { ...perfil.endereco, cep: maskCEP(e.target.value) }
+                      })}
+                    />
+                  </div>
+
+                  <div style={styles.inputGroup}>
+                    <label style={styles.label}>Rua</label>
+                    <input
+                      style={styles.input}
+                      value={perfil.endereco.rua}
+                      onChange={(e) => setPerfil({
+                        ...perfil,
+                        endereco: { ...perfil.endereco, rua: e.target.value }
+                      })}
+                      placeholder="Nome da rua"
+                    />
+                  </div>
+
+                  <div style={styles.inputGroup}>
+                    <label style={styles.label}>Número</label>
+                    <input
+                      style={styles.input}
+                      value={perfil.endereco.numero}
+                      onChange={(e) => setPerfil({
+                        ...perfil,
+                        endereco: { ...perfil.endereco, numero: e.target.value }
+                      })}
+                      placeholder="123"
+                    />
+                  </div>
+
+                  <div style={styles.inputGroup}>
+                    <label style={styles.label}>Bairro</label>
+                    <input
+                      style={styles.input}
+                      value={perfil.endereco.bairro}
+                      onChange={(e) => setPerfil({
+                        ...perfil,
+                        endereco: { ...perfil.endereco, bairro: e.target.value }
+                      })}
+                      placeholder="Centro"
+                    />
+                  </div>
+
+                  <div style={styles.inputGroup}>
+                    <label style={styles.label}>Cidade</label>
+                    <input
+                      style={styles.input}
+                      value={perfil.endereco.cidade}
+                      onChange={(e) => setPerfil({
+                        ...perfil,
+                        endereco: { ...perfil.endereco, cidade: e.target.value }
+                      })}
+                      placeholder="São Paulo"
+                    />
+                  </div>
+
+                  <div style={styles.inputGroup}>
+                    <label style={styles.label}>Estado</label>
+                    <select
+                      style={styles.select}
+                      value={perfil.endereco.estado}
+                      onChange={(e) => setPerfil({
+                        ...perfil,
+                        endereco: { ...perfil.endereco, estado: e.target.value }
+                      })}
+                    >
+                      <option value="">Selecione...</option>
+                      {estados.map(estado => (
+                        <option key={estado} value={estado}>{estado}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
 
-                <div style={styles.inputGroup}>
-                  <label style={styles.label}>WhatsApp / Telefone *</label>
-                  <input
-                    style={styles.input}
-                    placeholder="(11) 00000-0000"
-                    value={perfil.whatsappFormatado}
-                    onChange={(e) => setPerfil({...perfil, whatsappFormatado: maskPhone(e.target.value)})}
-                    required
-                  />
-                </div>
-
-                <div style={styles.inputGroup}>
-                  <label style={styles.label}>E-mail de Login *</label>
-                  <input style={styles.input} value={perfil.loginEmail} disabled />
-                  <small style={styles.hint}>Contate o suporte para alterar o e-mail</small>
-                </div>
-              </div>
-
-              <h3 style={styles.subSectionTitle}>📍 Endereço</h3>
-              <div style={styles.formGrid}>
-                <div style={styles.inputGroup}>
-                  <label style={styles.label}>CEP</label>
-                  <input
-                    style={styles.input}
-                    placeholder="00.000-000"
-                    value={perfil.endereco.cep}
-                    onChange={(e) => setPerfil({...perfil, endereco: {...perfil.endereco, cep: maskCEP(e.target.value)}})}
-                  />
-                </div>
-
-                <div style={styles.inputGroup}>
-                  <label style={styles.label}>Rua</label>
-                  <input
-                    style={styles.input}
-                    value={perfil.endereco.rua}
-                    onChange={(e) => setPerfil({...perfil, endereco: {...perfil.endereco, rua: e.target.value}})}
-                  />
-                </div>
-
-                <div style={styles.inputGroup}>
-                  <label style={styles.label}>Número</label>
-                  <input
-                    style={styles.input}
-                    value={perfil.endereco.numero}
-                    onChange={(e) => setPerfil({...perfil, endereco: {...perfil.endereco, numero: e.target.value}})}
-                  />
-                </div>
-
-                <div style={styles.inputGroup}>
-                  <label style={styles.label}>Bairro</label>
-                  <input
-                    style={styles.input}
-                    value={perfil.endereco.bairro}
-                    onChange={(e) => setPerfil({...perfil, endereco: {...perfil.endereco, bairro: e.target.value}})}
-                  />
-                </div>
-
-                <div style={styles.inputGroup}>
-                  <label style={styles.label}>Cidade</label>
-                  <input
-                    style={styles.input}
-                    value={perfil.endereco.cidade}
-                    onChange={(e) => setPerfil({...perfil, endereco: {...perfil.endereco, cidade: e.target.value}})}
-                  />
-                </div>
-
-                <div style={styles.inputGroup}>
-                  <label style={styles.label}>Estado</label>
-                  <select
-                    style={styles.input}
-                    value={perfil.endereco.estado}
-                    onChange={(e) => setPerfil({...perfil, endereco: {...perfil.endereco, estado: e.target.value}})}
+                <div style={styles.formActions}>
+                  <button
+                    type="submit"
+                    style={styles.btnSalvar}
+                    disabled={loading || uploading}
                   >
-                    <option value="">Selecione...</option>
-                    <option value="SP">São Paulo</option>
-                    <option value="RJ">Rio de Janeiro</option>
-                    <option value="MG">Minas Gerais</option>
-                  </select>
+                    {loading ? (
+                      <>
+                        <div className="spinner" style={{ width: '20px', height: '20px', borderWidth: '2px' }}></div>
+                        Salvando...
+                      </>
+                    ) : (
+                      <>
+                        <Save size={18} />
+                        Salvar Alterações
+                      </>
+                    )}
+                  </button>
                 </div>
-              </div>
+              </form>
+            </div>
 
-              <div style={styles.formActions}>
-                <button type="submit" style={styles.btnSalvar} disabled={loading}>
-                  {loading ? 'Salvando...' : '💾 Salvar Alterações'}
-                </button>
-              </div>
-            </form>
-          </div>
-
-          {/* Alterar Senha */}
-          <div style={styles.senhaSection}>
-            <h2 style={styles.sectionTitle}>🔐 Alterar Senha</h2>
-            <form onSubmit={handleAlterarSenha} style={styles.form}>
-              <div style={styles.inputGroup}>
-                <label style={styles.label}>Senha Atual *</label>
-                <input style={styles.input} type="password" value={senhaAtual} onChange={(e) => setSenhaAtual(e.target.value)} required />
-              </div>
-              <div style={styles.inputGroup}>
-                <label style={styles.label}>Nova Senha *</label>
-                <input style={styles.input} type="password" value={novaSenha} onChange={(e) => setNovaSenha(e.target.value)} required minLength={6} />
-              </div>
-              <div style={styles.inputGroup}>
-                <label style={styles.label}>Confirmar Nova Senha *</label>
-                <input style={styles.input} type="password" value={confirmarSenha} onChange={(e) => setConfirmarSenha(e.target.value)} required />
-              </div>
-              <div style={styles.formActions}>
-                <button type="submit" style={styles.btnAlterarSenha} disabled={loading}>🔑 Atualizar Senha</button>
-              </div>
-            </form>
+            {/* Alterar Senha */}
+            <div style={{ ...styles.card, marginTop: '30px' }}>
+              <h2 style={styles.sectionTitle}>
+                <Lock size={20} />
+                Alterar Senha
+              </h2>
+              
+              <form onSubmit={alterarSenha} style={styles.form}>
+                <div style={styles.formGrid}>
+                  <div style={styles.inputGroup}>
+                    <label style={styles.label}>Senha Atual *</label>
+                    <input
+                      style={styles.input}
+                      type="password"
+                      value={senhaAtual}
+                      onChange={(e) => setSenhaAtual(e.target.value)}
+                      required
+                    />
+                  </div>
+                  
+                  <div style={styles.inputGroup}>
+                    <label style={styles.label}>Nova Senha *</label>
+                    <input
+                      style={styles.input}
+                      type="password"
+                      value={novaSenha}
+                      onChange={(e) => setNovaSenha(e.target.value)}
+                      required
+                      minLength={6}
+                    />
+                    <div style={styles.hint}>Mínimo 6 caracteres</div>
+                  </div>
+                  
+                  <div style={styles.inputGroup}>
+                    <label style={styles.label}>Confirmar Nova Senha *</label>
+                    <input
+                      style={styles.input}
+                      type="password"
+                      value={confirmarSenha}
+                      onChange={(e) => setConfirmarSenha(e.target.value)}
+                      required
+                    />
+                  </div>
+                </div>
+                
+                <div style={styles.formActions}>
+                  <button
+                    type="submit"
+                    style={styles.btnAlterarSenha}
+                    disabled={loading}
+                  >
+                    {loading ? (
+                      <>
+                        <div className="spinner" style={{ width: '20px', height: '20px', borderWidth: '2px' }}></div>
+                        Alterando...
+                      </>
+                    ) : (
+                      <>
+                        <Lock size={18} />
+                        Atualizar Senha
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
         </div>
       </div>
     </Layout>
   );
-};
-
-const styles = {
-  container: { maxWidth: '1200px', margin: '0 auto', width: '100%' },
-  header: { marginBottom: '40px', paddingBottom: '20px', borderBottom: '1px solid rgba(79, 209, 197, 0.08)' },
-  title: { color: '#4FD1C5', fontSize: '26px', marginBottom: '8px' },
-  subtitle: { color: '#81E6D9', opacity: 0.8 },
-  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: '30px', alignItems: 'start' },
-  perfilSection: { backgroundColor: 'rgba(0, 35, 40, 0.6)', border: '1px solid rgba(79, 209, 197, 0.12)', borderRadius: '12px', padding: '30px' },
-  infoSection: { backgroundColor: 'rgba(0, 35, 40, 0.6)', border: '1px solid rgba(79, 209, 197, 0.12)', borderRadius: '12px', padding: '30px', gridColumn: 'span 2' },
-  senhaSection: { backgroundColor: 'rgba(0, 35, 40, 0.6)', border: '1px solid rgba(79, 209, 197, 0.12)', borderRadius: '12px', padding: '30px' },
-  sectionTitle: { color: '#4FD1C5', fontSize: '18px', marginBottom: '25px', display: 'flex', alignItems: 'center', gap: '10px' },
-  subSectionTitle: { color: '#81E6D9', fontSize: '16px', margin: '25px 0 15px 0' },
-  fotoContainer: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px' },
-  fotoWrapper: { width: '200px', height: '200px', borderRadius: '50%', overflow: 'hidden', border: '3px solid rgba(79, 209, 197, 0.3)', backgroundColor: 'rgba(0, 0, 0, 0.2)' },
-  foto: { width: '100%', height: '100%', objectFit: 'cover' },
-  fotoPlaceholder: { width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(79, 209, 197, 0.15)', color: '#4FD1C5', fontSize: '60px', fontWeight: 'bold' },
-  fotoActions: { display: 'flex', gap: '15px' },
-  btnUpload: { backgroundColor: '#4FD1C5', color: '#00171A', border: 'none', padding: '10px 20px', borderRadius: '8px', cursor: 'pointer', fontSize: '14px', fontWeight: 'bold' },
-  fotoHint: { color: '#A0AEC0', fontSize: '12px', textAlign: 'center' },
-  form: { display: 'flex', flexDirection: 'column', gap: '20px' },
-  formGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))', gap: '20px' },
-  inputGroup: { display: 'flex', flexDirection: 'column', gap: '8px' },
-  label: { color: '#81E6D9', fontSize: '14px', fontWeight: '500' },
-  input: { backgroundColor: 'rgba(0, 23, 26, 0.8)', border: '1px solid rgba(79, 209, 197, 0.2)', borderRadius: '8px', padding: '12px', color: '#fff', outline: 'none', fontSize: '14px' },
-  hint: { color: '#A0AEC0', fontSize: '12px', marginTop: '4px' },
-  formActions: { display: 'flex', justifyContent: 'flex-end', marginTop: '20px' },
-  btnSalvar: { backgroundColor: '#4FD1C5', color: '#00171A', border: 'none', padding: '12px 30px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontSize: '16px' },
-  btnAlterarSenha: { backgroundColor: 'rgba(72, 187, 120, 0.1)', color: '#48BB78', border: '1px solid rgba(72, 187, 120, 0.2)', padding: '12px 30px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }
 };
 
 export default MeuPerfil;
