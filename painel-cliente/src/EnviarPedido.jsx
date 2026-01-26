@@ -12,6 +12,12 @@ const toNumber = (v) => {
   return Number.isFinite(n) ? n : 0;
 };
 
+const normalizeWhatsApp = (value) => {
+  const digits = String(value ?? '').replace(/\D/g, '');
+  if (!digits) return '';
+  return digits.startsWith('55') ? digits : `55${digits}`;
+};
+
 const calcAdicionais = (item) => {
   const grupos = Array.isArray(item?.escolhas) ? item.escolhas : [];
   let total = 0;
@@ -157,11 +163,13 @@ const EnviarPedido = ({ estabelecimento, carrinho, dadosCliente, onVoltar, onSuc
         `*Cliente:* ${dadosCliente.nomeCompleto}\n` +
         `*Total:* R$ ${calcularTotal().toFixed(2)}`;
 
-      const tel = estabelecimento?.whatsapp || '5516999999999';
-      window.open(
-        `https://wa.me/${String(tel).replace(/\D/g, '')}?text=${encodeURIComponent(msg)}`,
-        '_blank'
-      );
+      const tel = normalizeWhatsApp(estabelecimento?.whatsapp);
+      if (tel) {
+        window.open(
+          `https://wa.me/${tel}?text=${encodeURIComponent(msg)}`,
+          '_blank'
+        );
+      }
 
     } catch (error) {
       console.error("Erro ao salvar:", error);
