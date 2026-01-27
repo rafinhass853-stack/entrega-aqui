@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react';
+// EnviarPedido.jsx (ATUALIZADO) — cole e substitua o arquivo todo
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   ArrowLeft, CheckCircle, CreditCard, DollarSign, QrCode, MapPin, Loader2,
   MessageCircle, Utensils, Truck, Shield, Package, Clock, AlertCircle, User, Home
 } from 'lucide-react';
 import { db } from './firebase';
-import { collection, addDoc, serverTimestamp, doc, onSnapshot } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, doc, onSnapshot, getDoc } from 'firebase/firestore';
 
 const toNumber = (v) => {
   const n = Number(String(v ?? '').replace(',', '.'));
@@ -48,8 +49,17 @@ const formatAdicionaisTexto = (item) => {
   return linhas.join(' | ');
 };
 
+// Mapeia ícones por grupo
+const grupoUI = {
+  dinheiro_pix: { tituloFallback: '💰 Dinheiro e Pix', icon: <DollarSign size={24} /> },
+  credito: { tituloFallback: '💳 Cartão de Crédito', icon: <CreditCard size={24} /> },
+  debito: { tituloFallback: '💳 Cartão de Débito', icon: <CreditCard size={24} /> },
+  vr: { tituloFallback: '🟢 Vale Refeição (VR)', icon: <Utensils size={24} /> },
+  va: { tituloFallback: '🔵 Vale Alimentação (VA)', icon: <Utensils size={24} /> }
+};
+
 const EnviarPedido = ({ estabelecimento, carrinho, dadosCliente, onVoltar, onSucesso }) => {
-  const [metodoPagamento, setMetodoPagamento] = useState('pix');
+  const [metodoPagamento, setMetodoPagamento] = useState('pix'); // aqui será o ID da opção (pix, dinheiro, visa, etc)
   const [troco, setTroco] = useState('');
   const [observacoes, setObservacoes] = useState('');
   const [enviando, setEnviando] = useState(false);
@@ -58,6 +68,23 @@ const EnviarPedido = ({ estabelecimento, carrinho, dadosCliente, onVoltar, onSuc
   const [pedidoRealTime, setPedidoRealTime] = useState(null);
   const [etapa, setEtapa] = useState('pagamento'); // 'pagamento', 'confirmacao', 'sucesso'
 
+  // ✅ NOVO: configs do estabelecimento
+  const [pagamentosConfig, setPagamentosConfig] = useState(null); // doc configuracoes/pagamentos -> { config: {...} }
+  const [bairrosEntrega, setBairrosEntrega] = useState([]);       // doc configuracao/entrega -> { bairros: [...] }
+  const [bairroSelecionado, setBairroSelecionado] = useState(''); // chave do bairro
+  const [freteSelecionado, setFreteSelecionado] = useState(null); // number
+
+  const estabId = useMemo(
+    () => estabelecimento?.id || estabelecimento?.restauranteId || estabelecimento?.uid || null,
+    [estabelecimento]
+  );
+
+  const estabNome = useMemo(
+    () => estabelecimento?.cliente || estabelecimento?.nome || 'Restaurante',
+    [estabelecimento]
+  );
+
+  // Realtime do pedido (status)
   useEffect(() => {
     if (!idDocPedido) return;
     const unsub = onSnapshot(doc(db, "Pedidos", idDocPedido), (docSnap) => {
@@ -66,15 +93,147 @@ const EnviarPedido = ({ estabelecimento, carrinho, dadosCliente, onVoltar, onSuc
     return () => unsub();
   }, [idDocPedido]);
 
+  // ✅ Buscar pagamentos e bairros do estabelecimento
+  useEffect(() => {
+    const run = async () => {
+      if (!estabId) return;
+
+      try {
+        // pagamentos: estabelecimentos/{id}/configuracoes/pagamentos
+        const pagRef = doc(db, 'estabelecimentos', estabId, 'configuracoes', 'pagamentos');
+        const pagSnap = await getDoc(pagRef);
+        if (pagSnap.exists()) setPagamentosConfig(pagSnap.data());
+        else setPagamentosConfig(null);
+
+        // entrega: estabelecimentos/{id}/configuracao/entrega
+        const entRef = doc(db, 'estabelecimentos', estabId, 'configuracao', 'entrega');
+        const entSnap = await getDoc(entRef);
+        const entData = entSnap.exists() ? entSnap.data() : null;
+        const bairros = Array.isArray(entData?.bairros) ? entData.bairros : [];
+        setBairrosEntrega(bairros);
+
+        // pré-seleciona bairro pelo cadastro do cliente (se bater)
+        const bairroCliente = String(dadosCliente?.bairro || '').trim().toLowerCase();
+        const encontrado =
+          bairros.find(b => String(b?.chave || '').toLowerCase() === bairroCliente) ||
+          bairros.find(b => String(b?.nome || '').trim().toLowerCase() === bairroCliente);
+
+        if (encontrado?.chave) {
+          setBairroSelecionado(String(encontrado.chave));
+          setFreteSelecionado(toNumber(encontrado.valor));
+        } else {
+          setBairroSelecionado('');
+          setFreteSelecionado(null);
+        }
+      } catch (e) {
+        console.error('Erro ao buscar configs do estabelecimento:', e);
+        setPagamentosConfig(null);
+        setBairrosEntrega([]);
+        setBairroSelecionado('');
+        setFreteSelecionado(null);
+      }
+    };
+    run();
+  }, [estabId, dadosCliente?.bairro]);
+
+  // ✅ Montar lista de pagamentos aceitos (somente ativos)
+  const pagamentosAceitos = useMemo(() => {
+    const cfg = pagamentosConfig?.config;
+    if (!cfg || typeof cfg !== 'object') return [];
+
+    const grupos = Object.keys(cfg);
+    const lista = [];
+
+    grupos.forEach((gKey) => {
+      const grupo = cfg[gKey];
+      if (!grupo) return;
+
+      const grupoAtivo = grupo?.ativo;
+      const opcoes = Array.isArray(grupo?.opcoes) ? grupo.opcoes : [];
+      const titulo = grupo?.titulo || grupoUI[gKey]?.tituloFallback || gKey;
+
+      const opcoesAtivas = opcoes.filter(o => o?.ativo);
+      if (!opcoesAtivas.length) return;
+      if (grupoAtivo === false) return; // se grupo desativado, não mostra
+
+      lista.push({
+        grupoKey: gKey,
+        titulo,
+        opcoes: opcoesAtivas.map(o => ({
+          id: String(o?.id || ''),
+          nome: String(o?.nome || ''),
+          icone: String(o?.icone || '💳'),
+          comissao: toNumber(o?.comissao),
+        }))
+      });
+    });
+
+    // fallback se nada veio: pelo menos PIX + dinheiro (pra não quebrar a tela)
+    if (!lista.length) {
+      return [
+        {
+          grupoKey: 'dinheiro_pix',
+          titulo: '💰 Dinheiro e Pix',
+          opcoes: [
+            { id: 'pix', nome: 'Pix', icone: '💎', comissao: 0 },
+            { id: 'dinheiro', nome: 'Dinheiro', icone: '💵', comissao: 0 }
+          ]
+        }
+      ];
+    }
+
+    return lista;
+  }, [pagamentosConfig]);
+
+  // ✅ Garante que o método selecionado exista
+  useEffect(() => {
+    const allIds = pagamentosAceitos.flatMap(g => g.opcoes.map(o => o.id));
+    if (!allIds.length) return;
+
+    if (!allIds.includes(metodoPagamento)) {
+      setMetodoPagamento(allIds[0]);
+      setTroco('');
+    }
+  }, [pagamentosAceitos]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const metodoSelecionadoInfo = useMemo(() => {
+    for (const g of pagamentosAceitos) {
+      const opt = g.opcoes.find(o => o.id === metodoPagamento);
+      if (opt) return { grupoKey: g.grupoKey, grupoTitulo: g.titulo, ...opt };
+    }
+    return { grupoKey: 'dinheiro_pix', grupoTitulo: 'Pagamento', id: metodoPagamento, nome: metodoPagamento, icone: '💳', comissao: 0 };
+  }, [pagamentosAceitos, metodoPagamento]);
+
+  const isDinheiro = metodoSelecionadoInfo?.id === 'dinheiro';
+
   const calcularSubtotal = () =>
     (Array.isArray(carrinho) ? carrinho : []).reduce((total, item) => {
       const qtd = toNumber(item?.quantidade) || 1;
       return total + (calcItemUnitarioFinal(item) * qtd);
     }, 0);
 
-  const calcularTotal = () => calcularSubtotal() + toNumber(estabelecimento?.taxaEntrega);
+  const taxaEntregaAtual = useMemo(() => {
+    // se o cliente selecionou bairro (freteSelecionado != null), usa ele
+    if (freteSelecionado != null) return toNumber(freteSelecionado);
+    // fallback: caso loja use taxa fixa
+    return toNumber(estabelecimento?.taxaEntrega);
+  }, [freteSelecionado, estabelecimento?.taxaEntrega]);
+
+  const calcularTotal = () => calcularSubtotal() + taxaEntregaAtual;
+
+  const handleSelecionarBairro = (chave) => {
+    setBairroSelecionado(chave);
+    const b = (bairrosEntrega || []).find(x => String(x?.chave || '') === String(chave));
+    setFreteSelecionado(b ? toNumber(b.valor) : null);
+  };
 
   const handleEnviarPedido = async () => {
+    // exige bairro se a loja cadastrou bairros
+    if (Array.isArray(bairrosEntrega) && bairrosEntrega.length > 0 && !bairroSelecionado) {
+      alert('Selecione seu bairro para calcular o frete.');
+      return;
+    }
+
     setEnviando(true);
     const numero = Math.floor(100000 + Math.random() * 900000);
 
@@ -99,16 +258,23 @@ const EnviarPedido = ({ estabelecimento, carrinho, dadosCliente, onVoltar, onSuc
         };
       });
 
-      const estabId = estabelecimento?.id || estabelecimento?.restauranteId || estabelecimento?.uid || 'loja_01';
-      const estabNome = estabelecimento?.cliente || estabelecimento?.nome || 'Restaurante';
+      const subtotal = calcularSubtotal();
+      const frete = taxaEntregaAtual;
+      const total = subtotal + frete;
+
+      const bairroObj = (bairrosEntrega || []).find(b => String(b?.chave || '') === String(bairroSelecionado));
+      const bairroNome = bairroObj?.nome || dadosCliente?.bairro || '';
 
       const dadosDoPedido = {
         numeroPedido: numero,
+
         estabelecimentoId: estabId,
         estabelecimentoNome: estabNome,
         restauranteId: estabId,
         restauranteNome: estabNome,
+
         itens: itensFormatados,
+
         cliente: {
           nomeCompleto: dadosCliente.nomeCompleto,
           telefone: String(dadosCliente.telefone).replace(/\D/g, ''),
@@ -120,18 +286,32 @@ const EnviarPedido = ({ estabelecimento, carrinho, dadosCliente, onVoltar, onSuc
           referencia: dadosCliente.referencia || '',
           cep: dadosCliente.cep || ''
         },
-        pagamento: {
-          metodo: metodoPagamento,
-          troco: metodoPagamento === 'dinheiro' ? (troco || "") : "",
-          subtotal: calcularSubtotal(),
-          taxaEntrega: toNumber(estabelecimento?.taxaEntrega),
-          total: calcularTotal()
+
+        // ✅ NOVO: entrega detalhada
+        entrega: {
+          modo: (bairrosEntrega?.length ? 'bairro' : 'fixo'),
+          bairroSelecionado: bairroSelecionado ? { chave: bairroSelecionado, nome: bairroNome } : null,
+          frete: frete
         },
+
+        pagamento: {
+          // ✅ agora vem do firebase
+          metodo: metodoSelecionadoInfo?.id || metodoPagamento,
+          metodoLabel: metodoSelecionadoInfo?.nome || metodoPagamento,
+          grupo: metodoSelecionadoInfo?.grupoKey || 'pagamento',
+          grupoLabel: metodoSelecionadoInfo?.grupoTitulo || 'Pagamento',
+          comissao: toNumber(metodoSelecionadoInfo?.comissao),
+          troco: isDinheiro ? (troco || "") : "",
+          subtotal: subtotal,
+          taxaEntrega: frete,
+          total: total
+        },
+
         observacoes: observacoes || "",
         status: 'pendente',
         dataCriacao: serverTimestamp(),
         tempoEstimado: estabelecimento?.tempoEntrega || 30,
-        taxaEntrega: toNumber(estabelecimento?.taxaEntrega)
+        taxaEntrega: frete
       };
 
       const docRef = await addDoc(collection(db, "Pedidos"), dadosDoPedido);
@@ -141,25 +321,37 @@ const EnviarPedido = ({ estabelecimento, carrinho, dadosCliente, onVoltar, onSuc
 
       if (typeof onSucesso === 'function') onSucesso();
 
-      // WhatsApp do estabelecimento
-      const msg = 
+      // ✅ WhatsApp mais descritivo
+      const linhasItens = itensFormatados.map(item => {
+        const adicionaisTxt = item?.adicionaisTexto ? `\n   + ${item.adicionaisTexto}` : '';
+        return `• ${item.quantidade}x ${item.nome} - R$ ${toNumber(item.precoTotal).toFixed(2)}${adicionaisTxt}`;
+      }).join('\n');
+
+      const msg =
 `*🎉 NOVO PEDIDO #${numero}*
 
 *Cliente:* ${dadosCliente.nomeCompleto}
 *Telefone:* ${dadosCliente.telefone}
-*Total:* R$ ${calcularTotal().toFixed(2)}
-*Pagamento:* ${metodoPagamento === 'dinheiro' ? 'Dinheiro' : metodoPagamento === 'pix' ? 'PIX' : 'Cartão'}${metodoPagamento === 'dinheiro' && troco ? ` (Troco para: R$ ${toNumber(troco).toFixed(2)})` : ''}
-
-*📦 ITENS:*
-${itensFormatados.map(item => `• ${item.quantidade}x ${item.nome} - R$ ${item.precoTotal.toFixed(2)}`).join('\n')}
 
 *📍 ENDEREÇO:*
 ${dadosCliente.rua}, ${dadosCliente.numero}
-${dadosCliente.bairro}, ${dadosCliente.cidade}
+${dadosCliente.bairro}${bairroNome ? ` (Frete por bairro: ${bairroNome})` : ''}, ${dadosCliente.cidade}
 ${dadosCliente.complemento ? `Complemento: ${dadosCliente.complemento}` : ''}
 ${dadosCliente.referencia ? `Referência: ${dadosCliente.referencia}` : ''}
 
-${observacoes ? `*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
+*💳 PAGAMENTO:*
+${metodoSelecionadoInfo?.icone || '💳'} ${metodoSelecionadoInfo?.nome || metodoPagamento} (${metodoSelecionadoInfo?.grupoTitulo || 'Pagamento'})
+${isDinheiro && troco ? `Troco para: R$ ${toNumber(troco).toFixed(2)}` : ''}
+
+*🧾 RESUMO:*
+Subtotal (lanches): R$ ${subtotal.toFixed(2)}
+Frete: R$ ${frete.toFixed(2)}
+*TOTAL:* R$ ${total.toFixed(2)}
+
+*📦 ITENS:*
+${linhasItens}
+
+${observacoes ? `\n*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
 
       const tel = normalizeWhatsApp(estabelecimento?.whatsapp);
       if (tel) {
@@ -168,7 +360,7 @@ ${observacoes ? `*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
             `https://wa.me/${tel}?text=${encodeURIComponent(msg)}`,
             '_blank'
           );
-        }, 1500);
+        }, 1200);
       }
 
     } catch (error) {
@@ -179,118 +371,75 @@ ${observacoes ? `*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
   };
 
   const styles = {
-    container: { 
-      backgroundColor: '#F8FAFC', 
-      minHeight: '100vh', 
-      fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif" 
+    container: {
+      backgroundColor: '#F8FAFC',
+      minHeight: '100vh',
+      fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif"
     },
     header: {
-      backgroundColor: '#0F3460', 
-      padding: '20px', 
-      display: 'flex', 
+      backgroundColor: '#0F3460',
+      padding: '20px',
+      display: 'flex',
       alignItems: 'center',
-      gap: '15px', 
-      color: 'white', 
-      borderBottomLeftRadius: '24px', 
+      gap: '15px',
+      color: 'white',
+      borderBottomLeftRadius: '24px',
       borderBottomRightRadius: '24px',
       position: 'sticky',
       top: 0,
       zIndex: 100,
       boxShadow: '0 4px 20px rgba(15, 52, 96, 0.15)'
     },
-    content: { 
-      padding: '20px', 
-      maxWidth: '600px', 
-      margin: '0 auto', 
-      paddingBottom: '40px' 
+    content: {
+      padding: '20px',
+      maxWidth: '600px',
+      margin: '0 auto',
+      paddingBottom: '40px'
     },
-    section: { 
-      backgroundColor: 'white', 
-      padding: '24px', 
-      borderRadius: '24px', 
-      marginBottom: '20px', 
+    section: {
+      backgroundColor: 'white',
+      padding: '24px',
+      borderRadius: '24px',
+      marginBottom: '20px',
       boxShadow: '0 8px 25px rgba(0,0,0,0.05)',
       border: '1px solid #E2E8F0'
     },
-    sectionTitle: { 
-      fontSize: '16px', 
-      fontWeight: '900', 
-      color: '#0F3460', 
-      marginBottom: '20px', 
-      display: 'flex', 
-      alignItems: 'center', 
-      gap: '12px' 
-    },
-    metodoGrid: { 
-      display: 'grid', 
-      gridTemplateColumns: '1fr 1fr 1fr', 
-      gap: '12px',
-      marginBottom: '20px'
-    },
-    btnMetodo: (ativo) => ({
-      padding: '16px 8px', 
-      borderRadius: '16px',
-      border: ativo ? '3px solid #10B981' : '2px solid #F1F5F9',
-      backgroundColor: ativo ? '#F0FDF4' : 'white',
-      cursor: 'pointer', 
-      display: 'flex', 
-      flexDirection: 'column',
-      alignItems: 'center', 
-      gap: '8px',
-      transition: 'all 0.3s ease',
-      '&:hover': {
-        transform: 'translateY(-2px)',
-        borderColor: '#10B981',
-        boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
-      }
-    }),
-    metodoIcon: {
-      width: '40px',
-      height: '40px',
-      borderRadius: '12px',
+    sectionTitle: {
+      fontSize: '16px',
+      fontWeight: '900',
+      color: '#0F3460',
+      marginBottom: '20px',
       display: 'flex',
       alignItems: 'center',
-      justifyContent: 'center',
-      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-      color: 'white'
+      gap: '12px'
     },
-    input: { 
-      width: '100%', 
-      padding: '16px', 
-      borderRadius: '14px', 
-      border: '2px solid #E2E8F0', 
-      marginTop: '10px', 
+    input: {
+      width: '100%',
+      padding: '16px',
+      borderRadius: '14px',
+      border: '2px solid #E2E8F0',
+      marginTop: '10px',
       boxSizing: 'border-box',
       fontSize: '16px',
-      outline: 'none',
-      transition: 'border-color 0.2s ease',
-      '&:focus': {
-        borderColor: '#10B981',
-        boxShadow: '0 0 0 3px rgba(16, 185, 129, 0.1)'
-      }
+      outline: 'none'
     },
-    textarea: { 
-      width: '100%', 
-      padding: '16px', 
-      borderRadius: '14px', 
-      border: '2px solid #E2E8F0', 
-      marginTop: '10px', 
-      boxSizing: 'border-box', 
-      minHeight: '120px', 
+    textarea: {
+      width: '100%',
+      padding: '16px',
+      borderRadius: '14px',
+      border: '2px solid #E2E8F0',
+      marginTop: '10px',
+      boxSizing: 'border-box',
+      minHeight: '120px',
       resize: 'vertical',
       fontSize: '15px',
       fontFamily: 'inherit',
-      outline: 'none',
-      transition: 'border-color 0.2s ease',
-      '&:focus': {
-        borderColor: '#10B981',
-        boxShadow: '0 0 0 3px rgba(16, 185, 129, 0.1)'
-      }
+      outline: 'none'
     },
-    resumoLinha: { 
-      display: 'flex', 
-      justifyContent: 'space-between', 
-      marginBottom: '12px', 
+    resumoLinha: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      marginBottom: '12px',
       fontSize: '15px',
       color: '#4A5568'
     },
@@ -305,58 +454,21 @@ ${observacoes ? `*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
       marginTop: '16px'
     },
     btnFinal: {
-      width: '100%', 
-      padding: '20px', 
-      background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)', 
-      color: 'white',
-      border: 'none', 
-      borderRadius: '16px', 
-      fontWeight: '900', 
-      fontSize: '18px',
-      cursor: 'pointer', 
-      display: 'flex', 
-      alignItems: 'center', 
-      justifyContent: 'center',
-      gap: '12px', 
-      marginTop: '20px',
-      transition: 'all 0.3s ease',
-      boxShadow: '0 8px 25px rgba(16, 185, 129, 0.3)',
-      '&:hover:not(:disabled)': {
-        transform: 'translateY(-3px)',
-        boxShadow: '0 12px 30px rgba(16, 185, 129, 0.4)'
-      },
-      '&:disabled': {
-        background: '#CBD5E0',
-        cursor: 'not-allowed',
-        transform: 'none',
-        boxShadow: 'none'
-      }
-    },
-    statusStep: (ativo) => ({
-      display: 'flex', 
-      alignItems: 'center', 
-      gap: '20px', 
-      padding: '20px 0',
-      borderBottom: '1px solid #F1F5F9', 
-      opacity: ativo ? 1 : 0.4
-    }),
-    iconCircle: (ativo) => ({
-      width: '48px', 
-      height: '48px', 
-      borderRadius: '50%',
-      background: ativo ? 'linear-gradient(135deg, #10B981 0%, #059669 100%)' : '#E2E8F0',
-      display: 'flex', 
-      alignItems: 'center', 
-      justifyContent: 'center', 
-      color: 'white',
-      flexShrink: 0
-    }),
-    infoBox: {
+      width: '100%',
       padding: '20px',
-      background: 'linear-gradient(135deg, #F0FDF4 0%, #D1FAE5 100%)',
+      background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
+      color: 'white',
+      border: 'none',
       borderRadius: '16px',
-      border: '2px solid #A7F3D0',
-      marginBottom: '20px'
+      fontWeight: '900',
+      fontSize: '18px',
+      cursor: 'pointer',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: '12px',
+      marginTop: '20px',
+      boxShadow: '0 8px 25px rgba(16, 185, 129, 0.3)'
     },
     clienteCard: {
       display: 'flex',
@@ -383,56 +495,112 @@ ${observacoes ? `*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
       borderRadius: '16px',
       border: '2px solid #E2E8F0',
       marginBottom: '20px'
+    },
+    alerta: {
+      padding: '14px',
+      background: '#FEF3C7',
+      border: '1px solid #F59E0B',
+      borderRadius: '14px',
+      color: '#92400E',
+      fontSize: '14px',
+      display: 'flex',
+      gap: '10px',
+      alignItems: 'flex-start',
+      marginTop: '12px'
+    },
+    // pagamentos UI
+    grupoBox: {
+      border: '1px solid #E2E8F0',
+      borderRadius: '16px',
+      padding: '14px',
+      marginBottom: '12px',
+      background: '#fff'
+    },
+    grupoTitulo: {
+      fontWeight: '900',
+      color: '#0F3460',
+      marginBottom: '10px',
+      fontSize: '14px'
+    },
+    opcoesRow: {
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: '10px'
+    },
+    opcaoBtn: (ativo) => ({
+      border: ativo ? '2px solid #10B981' : '1px solid #E2E8F0',
+      background: ativo ? '#F0FDF4' : '#F8FAFC',
+      borderRadius: '14px',
+      padding: '10px 12px',
+      cursor: 'pointer',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '8px',
+      fontWeight: '800',
+      color: '#0F3460',
+      fontSize: '13px'
+    }),
+    select: {
+      width: '100%',
+      padding: '14px',
+      borderRadius: '14px',
+      border: '2px solid #E2E8F0',
+      background: 'white',
+      fontSize: '15px',
+      fontWeight: '700',
+      color: '#0F3460',
+      outline: 'none'
     }
   };
 
+  // tela de sucesso (mantive a sua lógica original)
   if (pedidoEnviado && etapa === 'sucesso') {
     const status = pedidoRealTime?.status || 'pendente';
     const statusConfig = {
-      pendente: { 
-        title: 'Aguardando Restaurante...', 
+      pendente: {
+        title: 'Aguardando Restaurante...',
         message: 'Seu pedido foi enviado e está aguardando confirmação.',
         color: '#F59E0B',
         icon: '⏳'
       },
-      preparo: { 
-        title: 'O restaurante aceitou seu pedido!', 
+      preparo: {
+        title: 'O restaurante aceitou seu pedido!',
         message: 'Sua comida está sendo preparada com carinho.',
         color: '#3B82F6',
         icon: '👨‍🍳'
       },
-      entrega: { 
-        title: 'Seu pedido saiu para entrega!', 
+      entrega: {
+        title: 'Seu pedido saiu para entrega!',
         message: 'O entregador está a caminho com sua refeição.',
         color: '#8B5CF6',
         icon: '🚚'
       },
-      entregue: { 
-        title: 'Pedido Entregue! Aproveite!', 
+      entregue: {
+        title: 'Pedido Entregue! Aproveite!',
         message: 'Seu pedido foi entregue com sucesso. Bom apetite!',
         color: '#10B981',
         icon: '✅'
       },
-      cancelado: { 
-        title: 'Pedido cancelado', 
+      cancelado: {
+        title: 'Pedido cancelado',
         message: 'Seu pedido foi cancelado. Entre em contato para mais informações.',
         color: '#EF4444',
         icon: '❌'
       }
     };
-    
+
     const currentStatus = statusConfig[status] || statusConfig.pendente;
 
     return (
       <div style={styles.container}>
         <header style={styles.header}>
-          <ArrowLeft onClick={() => window.location.href = '/'} style={{cursor: 'pointer'}} />
+          <ArrowLeft onClick={() => window.location.href = '/'} style={{ cursor: 'pointer' }} />
           <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '900', flex: 1 }}>Acompanhar Pedido</h2>
         </header>
 
         <div style={styles.content}>
-          <div style={{ 
-            ...styles.section, 
+          <div style={{
+            ...styles.section,
             textAlign: 'center',
             border: `3px solid ${currentStatus.color}40`
           }}>
@@ -451,7 +619,7 @@ ${observacoes ? `*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
             }}>
               {currentStatus.icon}
             </div>
-            
+
             <div style={{ fontSize: '14px', color: '#64748B', marginBottom: '8px' }}>
               Pedido #{pedidoRealTime?.numeroPedido || '...'}
             </div>
@@ -461,7 +629,7 @@ ${observacoes ? `*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
             <p style={{ fontSize: '15px', color: '#64748B', marginBottom: '24px' }}>
               {currentStatus.message}
             </p>
-            
+
             <div style={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -485,57 +653,15 @@ ${observacoes ? `*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
           </div>
 
           <div style={styles.section}>
-            <div style={styles.statusStep(true)}>
-              <div style={styles.iconCircle(true)}>
-                <MessageCircle size={24} />
-              </div>
-              <div style={{flex: 1}}>
-                <div style={{ fontWeight: '900', fontSize: '16px' }}>Pedido Enviado</div>
-                <div style={{ fontSize: '14px', color: '#64748B', marginTop: '4px' }}>
-                  {new Date().toLocaleString('pt-BR')}
-                </div>
-              </div>
-              <CheckCircle size={24} color="#10B981" />
-            </div>
-
-            <div style={styles.statusStep(['preparo', 'entrega', 'entregue'].includes(status))}>
-              <div style={styles.iconCircle(['preparo', 'entrega', 'entregue'].includes(status))}>
-                <Utensils size={24} />
-              </div>
-              <div style={{flex: 1}}>
-                <div style={{ fontWeight: '900', fontSize: '16px' }}>Em Preparo</div>
-                <div style={{ fontSize: '14px', color: '#64748B', marginTop: '4px' }}>
-                  O restaurante está produzindo
-                </div>
-              </div>
-              {['preparo', 'entrega', 'entregue'].includes(status) && (
-                <CheckCircle size={24} color="#10B981" />
-              )}
-            </div>
-
-            <div style={styles.statusStep(['entrega', 'entregue'].includes(status))}>
-              <div style={styles.iconCircle(['entrega', 'entregue'].includes(status))}>
-                <Truck size={24} />
-              </div>
-              <div style={{flex: 1}}>
-                <div style={{ fontWeight: '900', fontSize: '16px' }}>Saiu para Entrega</div>
-                <div style={{ fontSize: '14px', color: '#64748B', marginTop: '4px' }}>
-                  O entregador está a caminho
-                </div>
-              </div>
-              {['entrega', 'entregue'].includes(status) && (
-                <CheckCircle size={24} color="#10B981" />
-              )}
-            </div>
-
             <div style={{ marginTop: '20px', padding: '20px', background: '#F8FAFC', borderRadius: '16px' }}>
               <div style={{ fontSize: '14px', fontWeight: '700', color: '#4A5568', marginBottom: '12px' }}>
                 Detalhes do Pedido
               </div>
               <div style={{ fontSize: '13px', color: '#64748B', lineHeight: '1.6' }}>
                 <div><b>Restaurante:</b> {pedidoRealTime?.restauranteNome || pedidoRealTime?.estabelecimentoNome || '-'}</div>
-                <div><b>Pagamento:</b> {pedidoRealTime?.pagamento?.metodo?.toUpperCase() || metodoPagamento}</div>
-                <div><b>Total:</b> R$ {toNumber(pedidoRealTime?.pagamento?.total ?? calcularTotal()).toFixed(2)}</div>
+                <div><b>Pagamento:</b> {pedidoRealTime?.pagamento?.metodoLabel || pedidoRealTime?.pagamento?.metodo || '-'}</div>
+                <div><b>Frete:</b> R$ {toNumber(pedidoRealTime?.pagamento?.taxaEntrega).toFixed(2)}</div>
+                <div><b>Total:</b> R$ {toNumber(pedidoRealTime?.pagamento?.total ?? 0).toFixed(2)}</div>
                 <div><b>Tempo estimado:</b> {pedidoRealTime?.tempoEstimado || 30} minutos</div>
               </div>
             </div>
@@ -543,8 +669,8 @@ ${observacoes ? `*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
 
           <button
             onClick={() => window.location.href = '/'}
-            style={{ 
-              ...styles.btnFinal, 
+            style={{
+              ...styles.btnFinal,
               background: 'linear-gradient(135deg, #0F3460 0%, #1E40AF 100%)',
               marginTop: '10px'
             }}
@@ -552,11 +678,11 @@ ${observacoes ? `*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
             <Home size={20} />
             Voltar ao Início
           </button>
-          
-          <div style={{ 
-            marginTop: '20px', 
-            padding: '20px', 
-            background: '#F0FDF4', 
+
+          <div style={{
+            marginTop: '20px',
+            padding: '20px',
+            background: '#F0FDF4',
             borderRadius: '16px',
             border: '1px solid #A7F3D0',
             textAlign: 'center'
@@ -572,7 +698,7 @@ ${observacoes ? `*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
             </div>
           </div>
         </div>
-        
+
         <style>{`
           @keyframes pulse {
             0%, 100% { opacity: 1; }
@@ -584,13 +710,20 @@ ${observacoes ? `*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
   }
 
   const subtotal = calcularSubtotal();
-  const taxa = toNumber(estabelecimento?.taxaEntrega);
+  const taxa = taxaEntregaAtual;
   const total = calcularTotal();
+
+  const bairroNomeSelecionado = useMemo(() => {
+    const b = (bairrosEntrega || []).find(x => String(x?.chave || '') === String(bairroSelecionado));
+    return b?.nome || '';
+  }, [bairrosEntrega, bairroSelecionado]);
+
+  const precisaSelecionarBairro = Array.isArray(bairrosEntrega) && bairrosEntrega.length > 0;
 
   return (
     <div style={styles.container}>
       <header style={styles.header}>
-        <ArrowLeft onClick={onVoltar} style={{cursor: 'pointer'}} />
+        <ArrowLeft onClick={onVoltar} style={{ cursor: 'pointer' }} />
         <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '900', flex: 1 }}>Finalizar Pedido</h2>
         <div style={{
           padding: '6px 12px',
@@ -610,7 +743,7 @@ ${observacoes ? `*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
             <div style={styles.clienteAvatar}>
               {dadosCliente?.nomeCompleto?.[0]?.toUpperCase() || 'C'}
             </div>
-            <div style={{flex: 1}}>
+            <div style={{ flex: 1 }}>
               <div style={{ fontSize: '18px', fontWeight: '900', color: '#0F3460' }}>
                 {dadosCliente?.nomeCompleto}
               </div>
@@ -639,56 +772,74 @@ ${observacoes ? `*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
             </div>
             <div style={{ fontSize: '15px', color: '#4A5568', lineHeight: '1.5' }}>
               {dadosCliente?.bairro}, {dadosCliente?.cidade || 'Araraquara'}
-              {dadosCliente?.complemento && (
-                <div style={{ marginTop: '8px', padding: '10px', background: '#FFFBEB', borderRadius: '10px' }}>
-                  <strong>Complemento:</strong> {dadosCliente.complemento}
-                </div>
-              )}
-              {dadosCliente?.referencia && (
-                <div style={{ marginTop: '8px', padding: '10px', background: '#F0FDF4', borderRadius: '10px' }}>
-                  <strong>Referência:</strong> {dadosCliente.referencia}
-                </div>
-              )}
             </div>
+
+            {/* ✅ NOVO: selecionar bairro/frete */}
+            {precisaSelecionarBairro && (
+              <div style={{ marginTop: '16px' }}>
+                <div style={{ fontSize: '14px', fontWeight: '900', color: '#0F3460', marginBottom: '10px' }}>
+                  Selecione seu bairro para calcular o frete
+                </div>
+                <select
+                  value={bairroSelecionado}
+                  onChange={(e) => handleSelecionarBairro(e.target.value)}
+                  style={styles.select}
+                >
+                  <option value="">— Selecione —</option>
+                  {bairrosEntrega.map((b, idx) => (
+                    <option key={`${b?.chave || idx}`} value={String(b?.chave || '')}>
+                      {String(b?.nome || b?.chave || 'Bairro')} • R$ {toNumber(b?.valor).toFixed(2)}
+                    </option>
+                  ))}
+                </select>
+
+                {!bairroSelecionado && (
+                  <div style={styles.alerta}>
+                    <AlertCircle size={18} />
+                    <div>
+                      Se você não selecionar o bairro, não conseguimos calcular o frete corretamente.
+                    </div>
+                  </div>
+                )}
+
+                {bairroSelecionado && (
+                  <div style={{ marginTop: '12px', fontSize: '14px', fontWeight: '800', color: '#065F46' }}>
+                    ✅ Frete para {bairroNomeSelecionado || bairroSelecionado}: R$ {toNumber(freteSelecionado).toFixed(2)}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Forma de Pagamento */}
+        {/* ✅ NOVO: Formas de Pagamento (do Firebase) */}
         <div style={styles.section}>
           <div style={styles.sectionTitle}>
-            <CreditCard size={20} color="#10B981" /> Forma de Pagamento
+            <CreditCard size={20} color="#10B981" /> Formas de Pagamento aceitas por {estabNome}
           </div>
 
-          <div style={styles.metodoGrid}>
-            {[
-              { tipo: 'pix', label: 'PIX', icon: <QrCode size={24} />, desc: 'Instantâneo' },
-              { tipo: 'dinheiro', label: 'Dinheiro', icon: <DollarSign size={24} />, desc: 'Troco' },
-              { tipo: 'cartao', label: 'Cartão', icon: <CreditCard size={24} />, desc: 'Crédito/Débito' }
-            ].map((tipo) => (
-              <button
-                key={tipo.tipo}
-                onClick={() => setMetodoPagamento(tipo.tipo)}
-                style={styles.btnMetodo(metodoPagamento === tipo.tipo)}
-                type="button"
-              >
-                <div style={styles.metodoIcon}>
-                  {tipo.icon}
-                </div>
-                <div>
-                  <div style={{ fontSize: '14px', fontWeight: '900', textTransform: 'uppercase' }}>
-                    {tipo.label}
-                  </div>
-                  <div style={{ fontSize: '11px', color: '#94A3B8', marginTop: '4px' }}>
-                    {tipo.desc}
-                  </div>
-                </div>
-              </button>
-            ))}
-          </div>
+          {pagamentosAceitos.map((g) => (
+            <div key={g.grupoKey} style={styles.grupoBox}>
+              <div style={styles.grupoTitulo}>{g.titulo}</div>
+              <div style={styles.opcoesRow}>
+                {g.opcoes.map((op) => (
+                  <button
+                    key={op.id}
+                    type="button"
+                    onClick={() => { setMetodoPagamento(op.id); setTroco(''); }}
+                    style={styles.opcaoBtn(metodoPagamento === op.id)}
+                  >
+                    <span style={{ fontSize: '16px' }}>{op.icone || '💳'}</span>
+                    <span>{op.nome}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
 
-          {metodoPagamento === 'dinheiro' && (
-            <div>
-              <div style={{ fontSize: '14px', fontWeight: '700', color: '#4A5568', marginBottom: '8px' }}>
+          {isDinheiro && (
+            <div style={{ marginTop: '14px' }}>
+              <div style={{ fontSize: '14px', fontWeight: '800', color: '#4A5568', marginBottom: '8px' }}>
                 Precisa de troco?
               </div>
               <input
@@ -701,37 +852,18 @@ ${observacoes ? `*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
                 min="0"
               />
               {troco && (
-                <div style={{ 
-                  marginTop: '10px', 
-                  padding: '12px', 
-                  background: '#FEF3C7', 
-                  borderRadius: '12px',
-                  border: '1px solid #F59E0B',
-                  fontSize: '14px',
-                  color: '#92400E'
-                }}>
-                  <strong>Troco calculado:</strong> R$ {(toNumber(troco) - total).toFixed(2)}
+                <div style={styles.alerta}>
+                  <AlertCircle size={18} />
+                  <div>
+                    Troco estimado: <b>R$ {(toNumber(troco) - total).toFixed(2)}</b>
+                  </div>
                 </div>
               )}
             </div>
           )}
-          
-          {metodoPagamento === 'pix' && (
-            <div style={styles.infoBox}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-                <QrCode size={24} color="#059669" />
-                <div style={{ fontSize: '15px', fontWeight: '800', color: '#065F46' }}>
-                  Pagamento via PIX
-                </div>
-              </div>
-              <div style={{ fontSize: '14px', color: '#047857', lineHeight: '1.5' }}>
-                Após confirmar o pedido, você receberá o QR Code para pagamento. O pedido só será confirmado após o pagamento.
-              </div>
-            </div>
-          )}
         </div>
 
-        {/* Resumo do Pedido */}
+        {/* Resumo do Pedido (mais descritivo) */}
         <div style={styles.section}>
           <div style={styles.sectionTitle}>
             <Package size={20} color="#10B981" /> Resumo do Pedido
@@ -746,7 +878,7 @@ ${observacoes ? `*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
             return (
               <div key={key} style={{ padding: '16px 0', borderBottom: '1px dashed #E2E8F0' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', alignItems: 'flex-start' }}>
-                  <div style={{flex: 1}}>
+                  <div style={{ flex: 1 }}>
                     <div style={{ fontWeight: '900', color: '#0F3460', fontSize: '16px', marginBottom: '6px' }}>
                       {qtd}x {item?.nome}
                     </div>
@@ -769,31 +901,18 @@ ${observacoes ? `*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
 
           <div style={{ marginTop: '20px', paddingTop: '20px', borderTop: '2px solid #E2E8F0' }}>
             <div style={styles.resumoLinha}>
-              <span>Subtotal ({carrinho.length} {carrinho.length === 1 ? 'item' : 'itens'})</span>
+              <span>Subtotal (lanches)</span>
               <b>R$ {subtotal.toFixed(2)}</b>
             </div>
+
             <div style={styles.resumoLinha}>
-              <span>Taxa de entrega</span>
-              <b style={{color: taxa === 0 ? '#10B981' : '#4A5568'}}>
+              <span>
+                Frete {bairroNomeSelecionado ? `(${bairroNomeSelecionado})` : ''}
+              </span>
+              <b style={{ color: taxa === 0 ? '#10B981' : '#4A5568' }}>
                 {taxa > 0 ? `R$ ${taxa.toFixed(2)}` : 'Grátis'}
               </b>
             </div>
-            
-            {taxa > 0 && subtotal < 30 && (
-              <div style={{
-                ...styles.resumoLinha,
-                color: '#059669',
-                fontSize: '14px',
-                fontStyle: 'italic',
-                background: '#F0FDF4',
-                padding: '10px',
-                borderRadius: '10px',
-                marginTop: '10px'
-              }}>
-                <AlertCircle size={16} style={{marginRight: '8px'}} />
-                Adicione mais R$ {(30 - subtotal).toFixed(2)} e ganhe frete grátis!
-              </div>
-            )}
 
             <div style={styles.resumoTotal}>
               <span>TOTAL</span>
@@ -817,12 +936,16 @@ ${observacoes ? `*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
           <button
             onClick={handleEnviarPedido}
             style={{ ...styles.btnFinal, opacity: enviando ? 0.8 : 1 }}
-            disabled={enviando || (Array.isArray(carrinho) ? carrinho.length === 0 : true)}
+            disabled={
+              enviando ||
+              (Array.isArray(carrinho) ? carrinho.length === 0 : true) ||
+              (precisaSelecionarBairro && !bairroSelecionado)
+            }
             type="button"
           >
             {enviando ? (
               <>
-                <Loader2 size={20} style={{animation: 'spin 1s linear infinite'}} />
+                <Loader2 size={20} style={{ animation: 'spin 1s linear infinite' }} />
                 Enviando Pedido...
               </>
             ) : (
@@ -833,10 +956,17 @@ ${observacoes ? `*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
             )}
           </button>
 
-          <div style={{ 
-            marginTop: '20px', 
-            padding: '20px', 
-            background: '#F8FAFC', 
+          {(precisaSelecionarBairro && !bairroSelecionado) && (
+            <div style={styles.alerta}>
+              <AlertCircle size={18} />
+              <div><b>Antes de confirmar:</b> selecione o bairro para calcular o frete.</div>
+            </div>
+          )}
+
+          <div style={{
+            marginTop: '20px',
+            padding: '20px',
+            background: '#F8FAFC',
             borderRadius: '16px',
             border: '1px solid #E2E8F0',
             textAlign: 'center'
@@ -852,20 +982,19 @@ ${observacoes ? `*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
             </div>
           </div>
 
-          <div style={{ 
-            marginTop: '15px', 
-            fontSize: '12px', 
-            color: '#94A3B8', 
+          <div style={{
+            marginTop: '15px',
+            fontSize: '12px',
+            color: '#94A3B8',
             textAlign: 'center',
             lineHeight: '1.5'
           }}>
-            Ao confirmar, o pedido será enviado para {estabelecimento?.cliente || 'o restaurante'} e você será redirecionado para acompanhar o status.
+            Ao confirmar, o pedido será enviado para {estabNome} e você será redirecionado para acompanhar o status.
           </div>
         </div>
       </div>
 
       <style>{`
-        .spin { animation: spin 1s linear infinite; }
         @keyframes spin { 
           from { transform: rotate(0deg); } 
           to { transform: rotate(360deg); } 

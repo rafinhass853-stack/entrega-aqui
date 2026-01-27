@@ -1,26 +1,29 @@
+// Cadastro.jsx
 import React, { useState, useEffect } from 'react';
-import { ArrowLeft, Loader2, UserCheck, MapPin, Shield, Phone, User, Home, Navigation } from 'lucide-react';
-import { db } from './firebase'; 
-import { 
-  collection, 
-  query, 
-  where, 
-  getDocs, 
-  limit, 
-  addDoc, 
-  updateDoc, 
-  doc, 
-  serverTimestamp 
+import { ArrowLeft, Loader2, UserCheck, MapPin, Shield, Phone, User, Navigation } from 'lucide-react';
+import { db } from './firebase';
+import {
+  collection,
+  query,
+  where,
+  getDocs,
+  limit,
+  addDoc,
+  updateDoc,
+  doc,
+  serverTimestamp
 } from 'firebase/firestore';
 
 const Cadastro = ({ onVoltar, onContinuar, dadosCliente: dadosIniciais, modoCheckout = false }) => {
   const [buscandoTelefone, setBuscandoTelefone] = useState(false);
   const [cadastroEncontrado, setCadastroEncontrado] = useState(false);
+  const [autoLogando, setAutoLogando] = useState(false);
+
   const [clienteIdNoBanco, setClienteIdNoBanco] = useState(null);
-  const [etapa, setEtapa] = useState('dados'); // 'dados' ou 'endereco'
+  const [etapa, setEtapa] = useState('dados'); // 'dados' | 'endereco'
   const [validandoCEP, setValidandoCEP] = useState(false);
   const [sugestoesEndereco, setSugestoesEndereco] = useState([]);
-  
+
   const [dados, setDados] = useState({
     nomeCompleto: dadosIniciais?.nomeCompleto || '',
     email: dadosIniciais?.email || '',
@@ -35,8 +38,18 @@ const Cadastro = ({ onVoltar, onContinuar, dadosCliente: dadosIniciais, modoChec
     referencia: dadosIniciais?.referencia || ''
   });
 
+  // ===== Helpers =====
+  const limparTelefone = (v) => String(v || '').replace(/\D/g, '').slice(0, 11);
+
   const formatarTelefone = (valor) => {
-    const limpo = valor.replace(/\D/g, '');
+    const limpo = limparTelefone(valor);
+    // (16) 99999-9999 ou (16) 9999-9999
+    if (limpo.length <= 10) {
+      return limpo
+        .replace(/^(\d{2})(\d)/g, '($1) $2')
+        .replace(/(\d{4})(\d)/, '$1-$2')
+        .slice(0, 14);
+    }
     return limpo
       .replace(/^(\d{2})(\d)/g, '($1) $2')
       .replace(/(\d{5})(\d)/, '$1-$2')
@@ -44,46 +57,42 @@ const Cadastro = ({ onVoltar, onContinuar, dadosCliente: dadosIniciais, modoChec
   };
 
   const formatarCEP = (valor) => {
-    const limpo = valor.replace(/\D/g, '');
-    return limpo
-      .replace(/^(\d{5})(\d)/, '$1-$2')
-      .slice(0, 9);
+    const limpo = String(valor || '').replace(/\D/g, '').slice(0, 8);
+    return limpo.replace(/^(\d{5})(\d)/, '$1-$2').slice(0, 9);
   };
 
   const handleTelefoneChange = (e) => {
     const valorFormatado = formatarTelefone(e.target.value);
-    setDados({ ...dados, telefone: valorFormatado });
+    setDados((prev) => ({ ...prev, telefone: valorFormatado }));
   };
 
   const handleCEPChange = (e) => {
     const valorFormatado = formatarCEP(e.target.value);
-    setDados({ ...dados, cep: valorFormatado });
-    
-    // Buscar CEP quando completo
+    setDados((prev) => ({ ...prev, cep: valorFormatado }));
+
     if (valorFormatado.replace(/\D/g, '').length === 8) {
       buscarCEP(valorFormatado);
     }
   };
 
   const buscarCEP = async (cep) => {
-    const cepLimpo = cep.replace(/\D/g, '');
+    const cepLimpo = String(cep || '').replace(/\D/g, '');
     if (cepLimpo.length !== 8) return;
-    
+
     setValidandoCEP(true);
     try {
       const response = await fetch(`https://viacep.com.br/ws/${cepLimpo}/json/`);
       const endereco = await response.json();
-      
+
       if (!endereco.erro) {
-        setDados(prev => ({
+        setDados((prev) => ({
           ...prev,
           rua: endereco.logradouro || '',
           bairro: endereco.bairro || '',
           cidade: endereco.localidade || 'Araraquara',
           estado: endereco.uf || 'SP'
         }));
-        
-        // Sugestões de endereços similares
+
         setSugestoesEndereco([
           `${endereco.logradouro}, ${endereco.bairro}`,
           `Próximo a ${endereco.bairro}`,
@@ -91,56 +100,107 @@ const Cadastro = ({ onVoltar, onContinuar, dadosCliente: dadosIniciais, modoChec
         ]);
       }
     } catch (error) {
-      console.error("Erro ao buscar CEP:", error);
+      console.error('Erro ao buscar CEP:', error);
     } finally {
       setValidandoCEP(false);
     }
   };
 
-  useEffect(() => {
-    const telefoneLimpo = dados.telefone.replace(/\D/g, '');
-    if (telefoneLimpo.length >= 10) {
-      const delay = setTimeout(() => buscarCadastro(dados.telefone), 800);
-      return () => clearTimeout(delay);
+  // ✅ Regras do "já logar" por telefone:
+  // - Busca em /clientes (mesmo nível de /estabelecimentos)
+  // - Se encontrar e tiver dados mínimos, salva no localStorage e chama onContinuar automaticamente
+  const temEnderecoMinimo = (d) =>
+    Boolean(String(d?.rua || '').trim()) &&
+    Boolean(String(d?.numero || '').trim()) &&
+    Boolean(String(d?.bairro || '').trim());
+
+  const temDadosMinimos = (d) =>
+    Boolean(String(d?.nomeCompleto || '').trim()) &&
+    /^\d{10,11}$/.test(limparTelefone(d?.telefone));
+
+  const autoLoginSePossivel = (dadosEncontrados) => {
+    const tel = limparTelefone(dadosEncontrados?.telefone);
+    const pronto =
+      temDadosMinimos({ ...dadosEncontrados, telefone: tel }) &&
+      (!modoCheckout || temEnderecoMinimo(dadosEncontrados));
+
+    if (pronto) {
+      const payloadLocal = { ...dadosEncontrados, telefone: tel };
+      localStorage.setItem('dadosCliente', JSON.stringify(payloadLocal));
+      setAutoLogando(true);
+
+      // chama e fecha a tela (se sua navegação usa isso)
+      onContinuar(payloadLocal);
+
+      setTimeout(() => setAutoLogando(false), 1200);
+      return true;
     }
+
+    // Se está no checkout e não tem endereço completo, manda direto pra etapa endereço
+    if (modoCheckout && temDadosMinimos({ ...dadosEncontrados, telefone: tel }) && !temEnderecoMinimo(dadosEncontrados)) {
+      setEtapa('endereco');
+    }
+
+    return false;
+  };
+
+  useEffect(() => {
+    const telLimpo = limparTelefone(dados.telefone);
+    if (telLimpo.length >= 10) {
+      const delay = setTimeout(() => buscarCadastro(telLimpo), 700);
+      return () => clearTimeout(delay);
+    } else {
+      setClienteIdNoBanco(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dados.telefone]);
 
-  const buscarCadastro = async (tel) => {
+  const buscarCadastro = async (telLimpo) => {
+    if (!/^\d{10,11}$/.test(telLimpo)) return;
+
     setBuscandoTelefone(true);
     try {
-      const q = query(
-        collection(db, "Cadastros_clientes"), 
-        where("telefone", "==", tel), 
-        limit(1)
-      );
+      // ✅ coleção clientes (mesma “linha” de estabelecimentos)
+      const q = query(collection(db, 'clientes'), where('telefone', '==', telLimpo), limit(1));
       const snap = await getDocs(q);
-      
+
       if (!snap.empty) {
         const docSnap = snap.docs[0];
-        const dadosDB = docSnap.data();
+        const dadosDB = docSnap.data() || {};
+        const merged = {
+          ...dados,
+          ...dadosDB,
+          telefone: formatarTelefone(telLimpo) // mantém exibindo formatado
+        };
+
         setClienteIdNoBanco(docSnap.id);
-        setDados(prev => ({ ...prev, ...dadosDB }));
+        setDados(merged);
+
         setCadastroEncontrado(true);
         setTimeout(() => setCadastroEncontrado(false), 4000);
+
+        // ✅ já loga automaticamente se puder
+        autoLoginSePossivel({ ...merged, telefone: telLimpo });
       } else {
         setClienteIdNoBanco(null);
       }
-    } catch (e) { 
-      console.error("Erro ao buscar cadastro:", e); 
-    } finally { 
-      setBuscandoTelefone(false); 
+    } catch (e) {
+      console.error('Erro ao buscar cadastro:', e);
+    } finally {
+      setBuscandoTelefone(false);
     }
   };
 
   const validarDados = () => {
     const erros = [];
-    
-    if (!dados.nomeCompleto.trim()) erros.push("Nome completo é obrigatório");
-    if (!dados.telefone.replace(/\D/g, '').match(/^\d{10,11}$/)) erros.push("Telefone inválido");
-    if (!dados.rua.trim()) erros.push("Rua é obrigatória");
-    if (!dados.numero.trim()) erros.push("Número é obrigatório");
-    if (!dados.bairro.trim()) erros.push("Bairro é obrigatório");
-    
+    const telLimpo = limparTelefone(dados.telefone);
+
+    if (!String(dados.nomeCompleto || '').trim()) erros.push('Nome completo é obrigatório');
+    if (!/^\d{10,11}$/.test(telLimpo)) erros.push('Telefone inválido');
+    if (!String(dados.rua || '').trim()) erros.push('Rua é obrigatória');
+    if (!String(dados.numero || '').trim()) erros.push('Número é obrigatório');
+    if (!String(dados.bairro || '').trim()) erros.push('Bairro é obrigatório');
+
     return erros;
   };
 
@@ -152,134 +212,121 @@ const Cadastro = ({ onVoltar, onContinuar, dadosCliente: dadosIniciais, modoChec
     }
 
     try {
+      const telLimpo = limparTelefone(dados.telefone);
+
       const payloadCliente = {
         ...dados,
-        telefone: dados.telefone.replace(/\D/g, ''),
+        telefone: telLimpo,
         ultimaAtualizacao: serverTimestamp(),
-        enderecoCompleto: `${dados.rua}, ${dados.numero} - ${dados.bairro}, ${dados.cidade} - ${dados.estado}`
+        enderecoCompleto: `${dados.rua}, ${dados.numero} - ${dados.bairro}, ${dados.cidade} - ${dados.estado}`,
+        tipoCliente: 'consumidor',
+        status: 'ativo'
       };
 
       if (clienteIdNoBanco) {
-        await updateDoc(doc(db, "Cadastros_clientes", clienteIdNoBanco), payloadCliente);
+        await updateDoc(doc(db, 'clientes', clienteIdNoBanco), payloadCliente);
       } else {
-        await addDoc(collection(db, "Cadastros_clientes"), {
+        await addDoc(collection(db, 'clientes'), {
           ...payloadCliente,
-          dataCriacao: serverTimestamp(),
-          tipoCliente: 'consumidor',
-          status: 'ativo'
+          dataCriacao: serverTimestamp()
         });
       }
 
-      localStorage.setItem('dadosCliente', JSON.stringify(dados));
-      onContinuar(dados);
-      
+      localStorage.setItem('dadosCliente', JSON.stringify(payloadCliente));
+      onContinuar(payloadCliente);
     } catch (error) {
-      console.error("Erro ao processar cadastro:", error);
-      alert("Erro ao salvar cadastro. Por favor, tente novamente.");
+      console.error('Erro ao processar cadastro:', error);
+      alert('Erro ao salvar cadastro. Por favor, tente novamente.');
     }
   };
 
+  // ====== STYLES (mantive os seus) ======
   const styles = {
-    container: { 
-      backgroundColor: '#F8FAFC', 
-      minHeight: '100vh', 
-      fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif" 
+    container: {
+      backgroundColor: '#F8FAFC',
+      minHeight: '100vh',
+      fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif"
     },
-    header: { 
-      backgroundColor: '#0F3460', 
-      padding: '20px', 
-      color: 'white', 
-      display: 'flex', 
-      alignItems: 'center', 
-      gap: '15px', 
-      borderBottomLeftRadius: '24px', 
+    header: {
+      backgroundColor: '#0F3460',
+      padding: '20px',
+      color: 'white',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '15px',
+      borderBottomLeftRadius: '24px',
       borderBottomRightRadius: '24px',
       position: 'sticky',
       top: 0,
       zIndex: 100
     },
-    content: { 
-      padding: '20px', 
-      maxWidth: '600px', 
+    content: {
+      padding: '20px',
+      maxWidth: '600px',
       margin: '0 auto',
-      paddingBottom: '40px' 
+      paddingBottom: '40px'
     },
-    form: { 
-      backgroundColor: 'white', 
-      padding: '30px', 
-      borderRadius: '24px', 
+    form: {
+      backgroundColor: 'white',
+      padding: '30px',
+      borderRadius: '24px',
       boxShadow: '0 10px 40px rgba(0,0,0,0.08)',
       border: '1px solid #E2E8F0'
     },
-    sectionTitle: { 
-      fontSize: '15px', 
-      fontWeight: '800', 
-      color: '#0F3460', 
-      textTransform: 'uppercase', 
-      letterSpacing: '1px', 
-      marginBottom: '20px', 
-      display: 'flex', 
-      alignItems: 'center', 
+    sectionTitle: {
+      fontSize: '15px',
+      fontWeight: '800',
+      color: '#0F3460',
+      textTransform: 'uppercase',
+      letterSpacing: '1px',
+      marginBottom: '20px',
+      display: 'flex',
+      alignItems: 'center',
       gap: '10px',
       paddingBottom: '10px',
       borderBottom: '2px solid #F1F5F9'
     },
-    inputGroup: { 
+    inputGroup: {
       marginBottom: '20px',
       position: 'relative'
     },
-    label: { 
-      display: 'flex', 
+    label: {
+      display: 'flex',
       alignItems: 'center',
       gap: '8px',
-      marginBottom: '8px', 
-      fontSize: '14px', 
-      fontWeight: '700', 
-      color: '#4A5568' 
+      marginBottom: '8px',
+      fontSize: '14px',
+      fontWeight: '700',
+      color: '#4A5568'
     },
-    input: { 
-      width: '100%', 
-      padding: '16px 20px', 
-      borderRadius: '14px', 
-      border: '2px solid #E2E8F0', 
-      fontSize: '16px', 
-      outline: 'none', 
+    input: {
+      width: '100%',
+      padding: '16px 20px',
+      borderRadius: '14px',
+      border: '2px solid #E2E8F0',
+      fontSize: '16px',
+      outline: 'none',
       boxSizing: 'border-box',
       transition: 'all 0.2s ease',
-      backgroundColor: '#F8FAFC',
-      '&:focus': {
-        borderColor: '#10B981',
-        backgroundColor: 'white',
-        boxShadow: '0 0 0 3px rgba(16, 185, 129, 0.1)'
-      }
+      backgroundColor: '#F8FAFC'
     },
-    btn: { 
-      width: '100%', 
-      padding: '18px', 
-      background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)', 
-      color: 'white', 
-      border: 'none', 
-      borderRadius: '14px', 
-      fontWeight: '800', 
-      fontSize: '16px', 
-      cursor: 'pointer', 
+    btn: {
+      width: '100%',
+      padding: '18px',
+      background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
+      color: 'white',
+      border: 'none',
+      borderRadius: '14px',
+      fontWeight: '800',
+      fontSize: '16px',
+      cursor: 'pointer',
       marginTop: '10px',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
       gap: '12px',
       transition: 'all 0.3s ease',
-      boxShadow: '0 4px 15px rgba(16, 185, 129, 0.3)',
-      '&:hover': {
-        transform: 'translateY(-2px)',
-        boxShadow: '0 8px 25px rgba(16, 185, 129, 0.4)'
-      },
-      '&:disabled': {
-        background: '#CBD5E0',
-        cursor: 'not-allowed',
-        transform: 'none',
-        boxShadow: 'none'
-      }
+      boxShadow: '0 4px 15px rgba(16, 185, 129, 0.3)'
     },
     btnSecundario: {
       width: '100%',
@@ -296,11 +343,7 @@ const Cadastro = ({ onVoltar, onContinuar, dadosCliente: dadosIniciais, modoChec
       alignItems: 'center',
       justifyContent: 'center',
       gap: '10px',
-      transition: 'all 0.2s ease',
-      '&:hover': {
-        backgroundColor: '#F1F5F9',
-        borderColor: '#CBD5E1'
-      }
+      transition: 'all 0.2s ease'
     },
     stepIndicator: {
       display: 'flex',
@@ -311,7 +354,7 @@ const Cadastro = ({ onVoltar, onContinuar, dadosCliente: dadosIniciais, modoChec
       paddingBottom: '20px',
       borderBottom: '1px solid #E2E8F0'
     },
-    step: (ativo, concluido) => ({
+    step: () => ({
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'center',
@@ -355,12 +398,7 @@ const Cadastro = ({ onVoltar, onContinuar, dadosCliente: dadosIniciais, modoChec
       fontSize: '13px',
       color: '#4A5568',
       cursor: 'pointer',
-      transition: 'all 0.2s ease',
-      '&:hover': {
-        background: '#F0FDF4',
-        borderColor: '#10B981',
-        transform: 'translateX(4px)'
-      }
+      transition: 'all 0.2s ease'
     },
     infoBox: {
       padding: '15px',
@@ -372,24 +410,10 @@ const Cadastro = ({ onVoltar, onContinuar, dadosCliente: dadosIniciais, modoChec
       alignItems: 'flex-start',
       gap: '12px'
     },
-    infoIcon: {
-      flexShrink: 0,
-      color: '#059669'
-    },
-    infoContent: {
-      flex: 1
-    },
-    infoTitle: {
-      fontWeight: '800',
-      color: '#065F46',
-      marginBottom: '4px',
-      fontSize: '14px'
-    },
-    infoText: {
-      fontSize: '13px',
-      color: '#047857',
-      lineHeight: '1.5'
-    }
+    infoIcon: { flexShrink: 0, color: '#059669' },
+    infoContent: { flex: 1 },
+    infoTitle: { fontWeight: '800', color: '#065F46', marginBottom: '4px', fontSize: '14px' },
+    infoText: { fontSize: '13px', color: '#047857', lineHeight: '1.5' }
   };
 
   const renderEtapaDados = () => (
@@ -399,158 +423,164 @@ const Cadastro = ({ onVoltar, onContinuar, dadosCliente: dadosIniciais, modoChec
           <Shield size={20} />
         </div>
         <div style={styles.infoContent}>
-          <div style={styles.infoTitle}>Segurança dos seus dados</div>
+          <div style={styles.infoTitle}>Login por telefone</div>
           <div style={styles.infoText}>
-            Seus dados são protegidos e usados apenas para entrega. Nós nunca compartilhamos suas informações.
+            Se seu telefone já estiver cadastrado, você entra automaticamente. Se não, você conclui o cadastro.
           </div>
         </div>
       </div>
 
-      <div style={styles.sectionTitle}><UserCheck size={18}/> SEUS DADOS PESSOAIS</div>
-      
+      <div style={styles.sectionTitle}>
+        <UserCheck size={18} /> SEUS DADOS PESSOAIS
+      </div>
+
       <div style={styles.inputGroup}>
-        <label style={styles.label}><User size={16} /> Nome Completo *</label>
-        <input 
-          type="text" 
-          value={dados.nomeCompleto} 
-          onChange={e => setDados({...dados, nomeCompleto: e.target.value})} 
+        <label style={styles.label}>
+          <User size={16} /> Nome Completo *
+        </label>
+        <input
+          type="text"
+          value={dados.nomeCompleto}
+          onChange={(e) => setDados({ ...dados, nomeCompleto: e.target.value })}
           placeholder="Ex: Rafael de Sousa"
-          style={styles.input} 
+          style={styles.input}
         />
       </div>
 
       <div style={styles.inputGroup}>
         <label style={styles.label}>
-          <Phone size={16} /> 
+          <Phone size={16} />
           Telefone Celular *
-          {buscandoTelefone && (
-            <Loader2 size={16} style={{animation: 'spin 1s linear infinite', color: '#10B981'}} />
+          {(buscandoTelefone || autoLogando) && (
+            <Loader2 size={16} style={{ animation: 'spin 1s linear infinite', color: '#10B981' }} />
           )}
         </label>
-        <div style={{position: 'relative'}}>
-          <input 
-            type="tel" 
-            value={dados.telefone} 
-            onChange={handleTelefoneChange} 
-            placeholder="(16) 99999-9999" 
-            style={styles.input} 
-          />
-        </div>
+
+        <input
+          type="tel"
+          value={dados.telefone}
+          onChange={handleTelefoneChange}
+          placeholder="(16) 99999-9999"
+          style={styles.input}
+        />
+
         {cadastroEncontrado && (
-          <div style={{
-            marginTop: '8px',
-            padding: '10px',
-            backgroundColor: '#F0FDF4',
-            color: '#166534',
-            borderRadius: '8px',
-            fontSize: '13px',
-            border: '1px solid #BBF7D0',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px'
-          }}>
+          <div
+            style={{
+              marginTop: '8px',
+              padding: '10px',
+              backgroundColor: '#F0FDF4',
+              color: '#166534',
+              borderRadius: '8px',
+              fontSize: '13px',
+              border: '1px solid #BBF7D0',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}
+          >
             <Shield size={14} />
-            Dados encontrados! Você pode editá-los se necessário.
+            Cadastro encontrado! Entrando automaticamente (se estiver completo)...
           </div>
         )}
       </div>
 
       <div style={styles.inputGroup}>
         <label style={styles.label}>📧 E-mail (opcional)</label>
-        <input 
-          type="email" 
-          value={dados.email} 
-          onChange={e => setDados({...dados, email: e.target.value})} 
+        <input
+          type="email"
+          value={dados.email}
+          onChange={(e) => setDados({ ...dados, email: e.target.value })}
           placeholder="seu@email.com"
-          style={styles.input} 
+          style={styles.input}
         />
       </div>
 
-      <button 
+      <button
         onClick={() => setEtapa('endereco')}
-        disabled={!dados.nomeCompleto || !dados.telefone.replace(/\D/g, '').match(/^\d{10,11}$/)}
+        disabled={!dados.nomeCompleto || !/^\d{10,11}$/.test(limparTelefone(dados.telefone))}
         style={styles.btn}
       >
         Continuar para Endereço
-        <ArrowLeft size={20} style={{transform: 'rotate(180deg)'}} />
+        <ArrowLeft size={20} style={{ transform: 'rotate(180deg)' }} />
       </button>
     </>
   );
 
   const renderEtapaEndereco = () => (
     <>
-      <div style={styles.sectionTitle}><MapPin size={18}/> ENDEREÇO DE ENTREGA</div>
+      <div style={styles.sectionTitle}>
+        <MapPin size={18} /> ENDEREÇO DE ENTREGA
+      </div>
 
       <div style={styles.inputGroup}>
         <label style={styles.label}>
           📍 CEP
           {validandoCEP && (
-            <Loader2 size={14} style={{animation: 'spin 1s linear infinite', color: '#10B981'}} />
+            <Loader2 size={14} style={{ animation: 'spin 1s linear infinite', color: '#10B981' }} />
           )}
         </label>
-        <input 
-          type="text" 
-          value={dados.cep} 
+        <input
+          type="text"
+          value={dados.cep}
           onChange={handleCEPChange}
-          placeholder="14.802-500"
-          style={styles.input} 
+          placeholder="14802-500"
+          style={styles.input}
         />
       </div>
 
-      <div style={{display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '15px'}}>
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '15px' }}>
         <div style={styles.inputGroup}>
-          <label style={styles.label}><Navigation size={16} /> Rua/Avenida *</label>
-          <input 
-            type="text" 
-            value={dados.rua} 
-            onChange={e => setDados({...dados, rua: e.target.value})} 
-            style={styles.input} 
-            placeholder="Rua..." 
+          <label style={styles.label}>
+            <Navigation size={16} /> Rua/Avenida *
+          </label>
+          <input
+            type="text"
+            value={dados.rua}
+            onChange={(e) => setDados({ ...dados, rua: e.target.value })}
+            style={styles.input}
+            placeholder="Rua..."
           />
         </div>
         <div style={styles.inputGroup}>
           <label style={styles.label}># Número *</label>
-          <input 
-            type="text" 
-            value={dados.numero} 
-            onChange={e => setDados({...dados, numero: e.target.value})} 
-            style={styles.input} 
-            placeholder="123" 
+          <input
+            type="text"
+            value={dados.numero}
+            onChange={(e) => setDados({ ...dados, numero: e.target.value })}
+            style={styles.input}
+            placeholder="123"
           />
         </div>
       </div>
 
-      <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px'}}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
         <div style={styles.inputGroup}>
           <label style={styles.label}>🏘️ Bairro *</label>
-          <input 
-            type="text" 
-            value={dados.bairro} 
-            onChange={e => setDados({...dados, bairro: e.target.value})} 
-            style={styles.input} 
-            placeholder="Bairro..." 
+          <input
+            type="text"
+            value={dados.bairro}
+            onChange={(e) => setDados({ ...dados, bairro: e.target.value })}
+            style={styles.input}
+            placeholder="Bairro..."
           />
         </div>
         <div style={styles.inputGroup}>
           <label style={styles.label}>🏙️ Cidade *</label>
-          <input 
-            type="text" 
-            value={dados.cidade} 
-            onChange={e => setDados({...dados, cidade: e.target.value})} 
-            style={styles.input} 
-            placeholder="Cidade..." 
+          <input
+            type="text"
+            value={dados.cidade}
+            onChange={(e) => setDados({ ...dados, cidade: e.target.value })}
+            style={styles.input}
+            placeholder="Cidade..."
           />
         </div>
       </div>
 
-      <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px'}}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
         <div style={styles.inputGroup}>
           <label style={styles.label}>📍 Estado</label>
-          <select 
-            value={dados.estado} 
-            onChange={e => setDados({...dados, estado: e.target.value})} 
-            style={styles.input}
-          >
+          <select value={dados.estado} onChange={(e) => setDados({ ...dados, estado: e.target.value })} style={styles.input}>
             <option value="SP">São Paulo (SP)</option>
             <option value="MG">Minas Gerais (MG)</option>
             <option value="RJ">Rio de Janeiro (RJ)</option>
@@ -559,41 +589,40 @@ const Cadastro = ({ onVoltar, onContinuar, dadosCliente: dadosIniciais, modoChec
         </div>
         <div style={styles.inputGroup}>
           <label style={styles.label}>🏠 Complemento</label>
-          <input 
-            type="text" 
-            value={dados.complemento} 
-            onChange={e => setDados({...dados, complemento: e.target.value})} 
-            style={styles.input} 
-            placeholder="Apto, bloco, etc..." 
+          <input
+            type="text"
+            value={dados.complemento}
+            onChange={(e) => setDados({ ...dados, complemento: e.target.value })}
+            style={styles.input}
+            placeholder="Apto, bloco, etc..."
           />
         </div>
       </div>
 
       <div style={styles.inputGroup}>
         <label style={styles.label}>🎯 Ponto de Referência</label>
-        <input 
-          type="text" 
-          value={dados.referencia} 
-          onChange={e => setDados({...dados, referencia: e.target.value})} 
-          style={styles.input} 
-          placeholder="Próximo ao mercado, farmácia..." 
+        <input
+          type="text"
+          value={dados.referencia}
+          onChange={(e) => setDados({ ...dados, referencia: e.target.value })}
+          style={styles.input}
+          placeholder="Próximo ao mercado, farmácia..."
         />
       </div>
 
       {sugestoesEndereco.length > 0 && (
         <div style={styles.sugestoesContainer}>
-          <div style={{fontSize: '12px', fontWeight: '700', color: '#4A5568', marginBottom: '10px'}}>
+          <div style={{ fontSize: '12px', fontWeight: '700', color: '#4A5568', marginBottom: '10px' }}>
             Sugestões baseadas no CEP:
           </div>
           {sugestoesEndereco.map((sugestao, index) => (
-            <div 
-              key={index} 
+            <div
+              key={index}
               style={styles.sugestaoItem}
               onClick={() => {
-                // Simular preenchimento automático
                 if (index === 0) {
                   const [rua, bairro] = sugestao.split(', ');
-                  setDados(prev => ({ ...prev, rua: rua || '', bairro: bairro || '' }));
+                  setDados((prev) => ({ ...prev, rua: rua || '', bairro: bairro || '' }));
                 }
               }}
             >
@@ -603,17 +632,11 @@ const Cadastro = ({ onVoltar, onContinuar, dadosCliente: dadosIniciais, modoChec
         </div>
       )}
 
-      <div style={{display: 'flex', gap: '15px', marginTop: '10px'}}>
-        <button 
-          onClick={() => setEtapa('dados')}
-          style={styles.btnSecundario}
-        >
+      <div style={{ display: 'flex', gap: '15px', marginTop: '10px' }}>
+        <button onClick={() => setEtapa('dados')} style={styles.btnSecundario}>
           <ArrowLeft size={18} /> Voltar
         </button>
-        <button 
-          onClick={handleFinalizar}
-          style={styles.btn}
-        >
+        <button onClick={handleFinalizar} style={styles.btn}>
           <Shield size={18} />
           {modoCheckout ? 'Finalizar Cadastro' : 'Salvar Cadastro'}
         </button>
@@ -628,7 +651,6 @@ const Cadastro = ({ onVoltar, onContinuar, dadosCliente: dadosIniciais, modoChec
           from { transform: rotate(0deg); } 
           to { transform: rotate(360deg); } 
         }
-        
         select {
           appearance: none;
           background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
@@ -638,60 +660,62 @@ const Cadastro = ({ onVoltar, onContinuar, dadosCliente: dadosIniciais, modoChec
           padding-right: 40px;
         }
       `}</style>
-      
+
       <header style={styles.header}>
-        <ArrowLeft onClick={onVoltar} style={{cursor: 'pointer'}} />
-        <h2 style={{margin: 0, fontSize: '18px', fontWeight: '800', flex: 1}}>
+        <ArrowLeft onClick={onVoltar} style={{ cursor: 'pointer' }} />
+        <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '800', flex: 1 }}>
           {modoCheckout ? 'Checkout - Cadastro' : 'Cadastro do Cliente'}
         </h2>
-        <div style={{
-          padding: '6px 12px',
-          background: 'rgba(255,255,255,0.15)',
-          borderRadius: '20px',
-          fontSize: '12px',
-          fontWeight: '700'
-        }}>
+        <div
+          style={{
+            padding: '6px 12px',
+            background: 'rgba(255,255,255,0.15)',
+            borderRadius: '20px',
+            fontSize: '12px',
+            fontWeight: '700'
+          }}
+        >
           {etapa === 'dados' ? '1/2' : '2/2'}
         </div>
       </header>
 
       <div style={styles.content}>
         <div style={styles.stepIndicator}>
-          <div 
-            style={styles.step(true, etapa === 'endereco')} 
-            onClick={() => setEtapa('dados')}
-          >
+          <div style={styles.step()} onClick={() => setEtapa('dados')}>
             <div style={styles.stepCircle(true, etapa === 'endereco')}>1</div>
             <div style={styles.stepLabel(true, etapa === 'endereco')}>Dados</div>
           </div>
-          <div 
-            style={styles.step(etapa === 'endereco', false)} 
-            onClick={() => dados.nomeCompleto && dados.telefone && setEtapa('endereco')}
+
+          <div
+            style={styles.step()}
+            onClick={() => {
+              if (String(dados.nomeCompleto || '').trim() && /^\d{10,11}$/.test(limparTelefone(dados.telefone))) {
+                setEtapa('endereco');
+              }
+            }}
           >
             <div style={styles.stepCircle(etapa === 'endereco', false)}>2</div>
             <div style={styles.stepLabel(etapa === 'endereco', false)}>Endereço</div>
           </div>
         </div>
 
-        <div style={styles.form}>
-          {etapa === 'dados' ? renderEtapaDados() : renderEtapaEndereco()}
-        </div>
+        <div style={styles.form}>{etapa === 'dados' ? renderEtapaDados() : renderEtapaEndereco()}</div>
 
-        <div style={{
-          marginTop: '30px',
-          padding: '20px',
-          background: '#F8FAFC',
-          borderRadius: '16px',
-          border: '1px solid #E2E8F0',
-          textAlign: 'center'
-        }}>
-          <div style={{display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', marginBottom: '10px'}}>
+        <div
+          style={{
+            marginTop: '30px',
+            padding: '20px',
+            background: '#F8FAFC',
+            borderRadius: '16px',
+            border: '1px solid #E2E8F0',
+            textAlign: 'center'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', marginBottom: '10px' }}>
             <Shield size={18} color="#10B981" />
-            <div style={{fontSize: '14px', fontWeight: '700', color: '#0F3460'}}>
-              Por que cadastrar?
-            </div>
+            <div style={{ fontSize: '14px', fontWeight: '700', color: '#0F3460' }}>Por que cadastrar?</div>
           </div>
-          <div style={{fontSize: '13px', color: '#64748B', lineHeight: '1.6'}}>
+          <div style={{ fontSize: '13px', color: '#64748B', lineHeight: '1.6' }}>
             • Entrega mais rápida • Histórico de pedidos • Ofertas exclusivas • Facilidade nas próximas compras
           </div>
         </div>

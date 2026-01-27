@@ -1,5 +1,6 @@
+// Carrinho.jsx (ATUALIZADO) — cole e substitua o arquivo todo
 import React, { useState } from 'react';
-import { ArrowLeft, Plus, Minus, Trash2, ShoppingBag, Package, AlertCircle, MapPin, Clock, Shield, MessageCircle } from 'lucide-react';
+import { ArrowLeft, Plus, Minus, Trash2, ShoppingBag, AlertCircle, MapPin, Clock, Shield, MessageCircle, Truck } from 'lucide-react';
 
 const useIsMobile = () => {
   const [isMobile, setIsMobile] = React.useState(() => window.innerWidth < 768);
@@ -48,7 +49,7 @@ const calcItemTotal = (item) => {
 
 const getStatusLoja = (estabelecimento) => {
   const flagAberto = estabelecimento?.aberto;
-  
+
   if (typeof flagAberto === 'boolean') {
     return {
       aberto: flagAberto,
@@ -58,11 +59,11 @@ const getStatusLoja = (estabelecimento) => {
     };
   }
 
-  return { 
-    aberto: true, 
-    mensagem: 'Aberto', 
-    cor: '#10B981', 
-    icone: '🟢' 
+  return {
+    aberto: true,
+    mensagem: 'Aberto',
+    cor: '#10B981',
+    icone: '🟢'
   };
 };
 
@@ -81,10 +82,16 @@ const Carrinho = ({
   const calcularSubtotal = () =>
     (Array.isArray(carrinho) ? carrinho : []).reduce((total, item) => total + calcItemTotal(item), 0);
 
-  const calcularTotal = () => {
+  // ✅ NOVO: no carrinho, NÃO calcula o frete por bairro
+  // Mostra uma taxa fixa somente se a loja realmente usar taxaEntrega fixa.
+  const lojaUsaFretePorBairro = Array.isArray(estabelecimento?.bairros) && estabelecimento.bairros.length > 0; // fallback (caso você injete isso no objeto)
+  const taxaEntregaFixa = toNumber(estabelecimento?.taxaEntrega);
+  const temTaxaFixa = taxaEntregaFixa > 0;
+
+  const calcularTotalPreview = () => {
+    // Se tiver taxa fixa, mostra preview. Se for por bairro, total = subtotal (frete depois).
     const subtotal = calcularSubtotal();
-    const taxaEntrega = toNumber(estabelecimento?.taxaEntrega);
-    return subtotal + taxaEntrega;
+    return subtotal + (lojaUsaFretePorBairro ? 0 : taxaEntregaFixa);
   };
 
   const styles = {
@@ -120,11 +127,7 @@ const Carrinho = ({
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      transition: 'all 0.2s ease',
-      '&:hover': {
-        background: 'rgba(255,255,255,0.25)',
-        transform: 'scale(1.05)'
-      }
+      transition: 'all 0.2s ease'
     },
     headerTitle: {
       color: 'white',
@@ -135,7 +138,7 @@ const Carrinho = ({
     },
     content: {
       padding: isMobile ? '20px 16px' : '24px 20px',
-      paddingBottom: isMobile ? '220px' : '200px'
+      paddingBottom: isMobile ? '250px' : '220px'
     },
     storeInfo: {
       background: 'white',
@@ -164,9 +167,7 @@ const Carrinho = ({
       fontSize: '24px',
       flexShrink: 0
     },
-    storeDetails: {
-      flex: 1
-    },
+    storeDetails: { flex: 1 },
     storeName: {
       fontSize: isMobile ? '18px' : '20px',
       fontWeight: '900',
@@ -178,7 +179,8 @@ const Carrinho = ({
       alignItems: 'center',
       gap: '12px',
       fontSize: '13px',
-      color: '#64748B'
+      color: '#64748B',
+      flexWrap: 'wrap'
     },
     statusBadge: {
       display: 'inline-flex',
@@ -199,6 +201,27 @@ const Carrinho = ({
       fontSize: '14px',
       color: '#4A5568'
     },
+    freteInfo: {
+      marginTop: '14px',
+      padding: '14px',
+      borderRadius: '16px',
+      border: '1px solid #E2E8F0',
+      background: '#F8FAFC',
+      display: 'flex',
+      alignItems: 'flex-start',
+      gap: '12px'
+    },
+    freteInfoTitle: {
+      fontWeight: '900',
+      color: '#0F3460',
+      marginBottom: '4px',
+      fontSize: '13px'
+    },
+    freteInfoText: {
+      fontSize: '13px',
+      color: '#64748B',
+      lineHeight: 1.4
+    },
     addMaisButton: {
       width: '100%',
       padding: isMobile ? '16px' : '18px',
@@ -213,12 +236,7 @@ const Carrinho = ({
       alignItems: 'center',
       justifyContent: 'center',
       gap: '10px',
-      fontSize: isMobile ? '15px' : '16px',
-      transition: 'all 0.3s ease',
-      '&:hover': {
-        background: '#D1FAE5',
-        transform: 'translateY(-2px)'
-      }
+      fontSize: isMobile ? '15px' : '16px'
     },
     itemList: {
       display: 'flex',
@@ -230,12 +248,7 @@ const Carrinho = ({
       padding: isMobile ? '20px' : '24px',
       borderRadius: '20px',
       boxShadow: '0 4px 15px rgba(0,0,0,0.05)',
-      border: '1px solid #F1F5F9',
-      transition: 'all 0.3s ease',
-      '&:hover': {
-        transform: 'translateY(-4px)',
-        boxShadow: '0 10px 30px rgba(0,0,0,0.1)'
-      }
+      border: '1px solid #F1F5F9'
     },
     itemHeader: {
       display: 'flex',
@@ -257,9 +270,7 @@ const Carrinho = ({
       flexShrink: 0,
       background: '#F1F5F9'
     },
-    itemDetails: {
-      flex: 1
-    },
+    itemDetails: { flex: 1 },
     itemName: {
       margin: 0,
       color: '#0F3460',
@@ -320,16 +331,7 @@ const Carrinho = ({
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
-      boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
-      transition: 'all 0.2s ease',
-      '&:hover': {
-        background: '#F1F5F9',
-        transform: 'scale(1.05)'
-      },
-      '&:disabled': {
-        opacity: 0.5,
-        cursor: 'not-allowed'
-      }
+      boxShadow: '0 2px 8px rgba(0,0,0,0.08)'
     },
     removerButton: {
       background: 'none',
@@ -342,11 +344,7 @@ const Carrinho = ({
       gap: '6px',
       padding: '8px 12px',
       borderRadius: '10px',
-      fontWeight: '700',
-      transition: 'all 0.2s ease',
-      '&:hover': {
-        background: '#FEF2F2'
-      }
+      fontWeight: '700'
     },
     resumo: {
       position: 'fixed',
@@ -400,18 +398,7 @@ const Carrinho = ({
       alignItems: 'center',
       justifyContent: 'center',
       gap: '12px',
-      boxShadow: '0 8px 25px rgba(16, 185, 129, 0.3)',
-      transition: 'all 0.3s ease',
-      '&:hover:not(:disabled)': {
-        transform: 'translateY(-3px)',
-        boxShadow: '0 12px 30px rgba(16, 185, 129, 0.4)'
-      },
-      '&:disabled': {
-        background: '#CBD5E0',
-        cursor: 'not-allowed',
-        transform: 'none',
-        boxShadow: 'none'
-      }
+      boxShadow: '0 8px 25px rgba(16, 185, 129, 0.3)'
     },
     emptyState: {
       textAlign: 'center',
@@ -471,13 +458,7 @@ const Carrinho = ({
       resize: 'vertical',
       minHeight: '80px',
       marginTop: '10px',
-      backgroundColor: 'white',
-      transition: 'border-color 0.2s ease',
-      '&:focus': {
-        outline: 'none',
-        borderColor: '#10B981',
-        boxShadow: '0 0 0 3px rgba(16, 185, 129, 0.1)'
-      }
+      backgroundColor: 'white'
     }
   };
 
@@ -502,7 +483,7 @@ const Carrinho = ({
             Adicione itens deliciosos do cardápio para continuar com sua compra.
           </p>
           <button onClick={onVoltar} style={styles.btnFinalizar}>
-            <ArrowLeft size={20} style={{transform: 'rotate(180deg)'}} />
+            <ArrowLeft size={20} style={{ transform: 'rotate(180deg)' }} />
             Voltar ao Cardápio
           </button>
         </div>
@@ -511,10 +492,8 @@ const Carrinho = ({
   }
 
   const status = getStatusLoja(estabelecimento);
-  const taxaEntregaNum = toNumber(estabelecimento?.taxaEntrega);
   const subtotal = calcularSubtotal();
-  const total = calcularTotal();
-  const economiaFrete = taxaEntregaNum === 0 ? 0 : Math.min(taxaEntregaNum, 5);
+  const totalPreview = calcularTotalPreview();
 
   return (
     <div style={styles.container}>
@@ -540,8 +519,8 @@ const Carrinho = ({
         {!status.aberto && (
           <div style={styles.alertBox}>
             <AlertCircle size={isMobile ? 20 : 24} />
-            <div style={{flex: 1}}>
-              <div style={{fontWeight: '800', marginBottom: '4px'}}>Estabelecimento fechado</div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: '800', marginBottom: '4px' }}>Estabelecimento fechado</div>
               <div>O pedido poderá ser realizado apenas quando estiver aberto.</div>
             </div>
           </div>
@@ -555,10 +534,10 @@ const Carrinho = ({
             <div style={styles.storeDetails}>
               <h3 style={styles.storeName}>{estabelecimento?.cliente || 'Loja'}</h3>
               <div style={styles.storeMeta}>
-                <span style={{display: 'flex', alignItems: 'center', gap: '4px'}}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                   <MapPin size={14} /> {estabelecimento?.endereco?.bairro || 'Bairro'}
                 </span>
-                <span style={{display: 'flex', alignItems: 'center', gap: '4px'}}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                   <Clock size={14} /> {estabelecimento?.tempoEntrega || 30} min
                 </span>
               </div>
@@ -573,15 +552,48 @@ const Carrinho = ({
               {status.icone} {status.mensagem}
             </span>
           </div>
-          
+
           <div style={styles.storeFooter}>
-            <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Shield size={16} color="#10B981" />
-              <span style={{fontSize: '13px', color: '#64748B'}}>Compra segura</span>
+              <span style={{ fontSize: '13px', color: '#64748B' }}>Compra segura</span>
             </div>
-            <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <MessageCircle size={16} color="#3B82F6" />
-              <span style={{fontSize: '13px', color: '#64748B'}}>Suporte 24h</span>
+              <span style={{ fontSize: '13px', color: '#64748B' }}>Suporte 24h</span>
+            </div>
+          </div>
+
+          {/* ✅ NOVO: aviso do frete */}
+          <div style={styles.freteInfo}>
+            <div style={{
+              width: '42px',
+              height: '42px',
+              borderRadius: '14px',
+              background: 'linear-gradient(135deg, #0F3460 0%, #1E40AF 100%)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: 'white',
+              flexShrink: 0
+            }}>
+              <Truck size={20} />
+            </div>
+
+            <div style={{ flex: 1 }}>
+              <div style={styles.freteInfoTitle}>Frete</div>
+
+              {lojaUsaFretePorBairro ? (
+                <div style={styles.freteInfoText}>
+                  O valor do frete é <b>calculado por bairro</b>. Você vai selecionar seu bairro na tela de <b>Finalizar Pedido</b>.
+                </div>
+              ) : (
+                <div style={styles.freteInfoText}>
+                  {taxaEntregaFixa === 0
+                    ? 'Frete grátis para este estabelecimento.'
+                    : `Taxa de entrega fixa: R$ ${taxaEntregaFixa.toFixed(2)}.`}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -593,7 +605,7 @@ const Carrinho = ({
         <div style={styles.itemList}>
           {carrinho.map((item) => {
             const itemTotal = calcItemTotal(item);
-            
+
             return (
               <div key={item.idUnico} style={styles.itemCard}>
                 <div style={styles.itemHeader}>
@@ -609,7 +621,7 @@ const Carrinho = ({
                     )}
                     <div style={styles.itemDetails}>
                       <h4 style={styles.itemName}>{item.nome}</h4>
-                      
+
                       {Array.isArray(item.escolhas) && item.escolhas.length > 0 && (
                         <div style={styles.opcoesContainer}>
                           {item.escolhas.map((grupo, idx) => (
@@ -634,7 +646,7 @@ const Carrinho = ({
                       )}
                     </div>
                   </div>
-                  
+
                   <span style={styles.itemPrice}>
                     R$ {itemTotal.toFixed(2)}
                   </span>
@@ -687,7 +699,7 @@ const Carrinho = ({
 
         {mostrarObservacoes && (
           <div style={styles.observacoesContainer}>
-            <div style={{fontSize: '15px', fontWeight: '800', color: '#0F3460', marginBottom: '10px'}}>
+            <div style={{ fontSize: '15px', fontWeight: '800', color: '#0F3460', marginBottom: '10px' }}>
               Observações do pedido
             </div>
             <textarea
@@ -720,13 +732,13 @@ const Carrinho = ({
         <div style={styles.resumoContent}>
           <div style={styles.resumoLinha}>
             <span>Subtotal ({carrinho.length} {carrinho.length === 1 ? 'item' : 'itens'})</span>
-            <span style={{fontWeight: '700'}}>R$ {subtotal.toFixed(2)}</span>
+            <span style={{ fontWeight: '700' }}>R$ {subtotal.toFixed(2)}</span>
           </div>
-          
+
           <div style={styles.resumoLinha}>
-            <span style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
-              Taxa de entrega
-              {taxaEntregaNum === 0 && (
+            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              Frete
+              {!lojaUsaFretePorBairro && taxaEntregaFixa === 0 && (
                 <span style={{
                   background: '#10B981',
                   color: 'white',
@@ -739,29 +751,42 @@ const Carrinho = ({
                 </span>
               )}
             </span>
-            <span style={{fontWeight: '700', color: taxaEntregaNum === 0 ? '#10B981' : '#64748B'}}>
-              {taxaEntregaNum > 0 ? `R$ ${taxaEntregaNum.toFixed(2)}` : 'Grátis'}
-            </span>
+
+            {lojaUsaFretePorBairro ? (
+              <span style={{ fontWeight: '800', color: '#0F3460' }}>
+                Calculado no bairro
+              </span>
+            ) : (
+              <span style={{ fontWeight: '700', color: taxaEntregaFixa === 0 ? '#10B981' : '#64748B' }}>
+                {taxaEntregaFixa > 0 ? `R$ ${taxaEntregaFixa.toFixed(2)}` : 'Grátis'}
+              </span>
+            )}
           </div>
-          
-          {economiaFrete > 0 && subtotal < 30 && (
-            <div style={{
-              ...styles.resumoLinha,
-              color: '#059669',
-              fontSize: '13px',
-              fontStyle: 'italic'
-            }}>
-              <span>🎯 Adicione mais R$ {(30 - subtotal).toFixed(2)} e ganhe frete grátis!</span>
-            </div>
-          )}
-          
+
           <div style={styles.resumoTotal}>
             <span>TOTAL</span>
-            <span style={{color: '#10B981'}}>R$ {total.toFixed(2)}</span>
+            <span style={{ color: '#10B981' }}>
+              {lojaUsaFretePorBairro ? `R$ ${subtotal.toFixed(2)}` : `R$ ${totalPreview.toFixed(2)}`}
+            </span>
           </div>
+
+          {lojaUsaFretePorBairro && (
+            <div style={{
+              marginTop: '10px',
+              padding: '12px',
+              borderRadius: '12px',
+              background: '#F0FDF4',
+              border: '1px solid #A7F3D0',
+              color: '#065F46',
+              fontSize: '12px',
+              fontWeight: '800'
+            }}>
+              🚚 O frete será somado após você selecionar o bairro na próxima etapa.
+            </div>
+          )}
         </div>
-        
-        <div style={{display: 'flex', gap: '12px'}}>
+
+        <div style={{ display: 'flex', gap: '12px' }}>
           <button
             onClick={() => setMostrarObservacoes(!mostrarObservacoes)}
             style={{
@@ -773,22 +798,15 @@ const Carrinho = ({
               borderRadius: '12px',
               fontWeight: '700',
               cursor: 'pointer',
-              fontSize: '14px',
-              transition: 'all 0.2s ease',
-              '&:hover': {
-                background: '#E2E8F0'
-              }
+              fontSize: '14px'
             }}
           >
             {mostrarObservacoes ? 'Cancelar' : '+ Observações'}
           </button>
-          
+
           <button
             onClick={onIrParaCadastro}
-            style={{
-              ...styles.btnFinalizar,
-              flex: 2
-            }}
+            style={{ ...styles.btnFinalizar, flex: 2 }}
             disabled={!status.aberto}
           >
             {status.aberto ? (
@@ -801,26 +819,24 @@ const Carrinho = ({
             )}
           </button>
         </div>
-        
+
         {!status.aberto && (
-          <div
-            style={{
-              fontSize: '13px',
-              color: '#F59E0B',
-              textAlign: 'center',
-              marginTop: '15px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '8px',
-              fontWeight: '700'
-            }}
-          >
+          <div style={{
+            fontSize: '13px',
+            color: '#F59E0B',
+            textAlign: 'center',
+            marginTop: '15px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '8px',
+            fontWeight: '700'
+          }}>
             <AlertCircle size={14} />
             Este estabelecimento está fechado no momento
           </div>
         )}
-        
+
         <div style={{
           marginTop: '20px',
           paddingTop: '15px',
@@ -829,7 +845,7 @@ const Carrinho = ({
           color: '#94A3B8',
           textAlign: 'center'
         }}>
-          <div style={{display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px'}}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
             <Shield size={12} />
             <span>Pagamento 100% seguro • Entrega garantida</span>
           </div>
