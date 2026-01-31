@@ -1,0 +1,12 @@
+{
+  "projects": { "default": "entregaqui-54665" },
+  "targets": {
+    "entregaqui-54665": {
+      "hosting": {
+        "cliente": ["entregaqui-54665"],
+        "estabelecimento": ["entregaqui-54665-a0574"],
+        "admin": ["entregaqui-54665-a3b8a"]
+      }
+    }
+  }
+}
