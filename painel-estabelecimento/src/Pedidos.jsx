@@ -1,4 +1,4 @@
-// Pedidos.jsx (COM HISTÓRICO EM LINHA + GRID ACEITAS/CANCELADAS) — cole e substitua o arquivo todo
+// Pedidos.jsx (COM HISTÓRICO EM LINHA + GRID ACEITAS/CANCELADAS + BASE/ADICIONAIS SEPARADOS) — cole e substitua o arquivo todo
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Layout } from './Menu';
 import { db } from './firebase';
@@ -36,7 +36,34 @@ const toNumber = (v) => {
   return Number.isFinite(n) ? n : 0;
 };
 
-const formatMoneyBR = (v) => `R$ ${toNumber(v).toFixed(2)}`;
+// ✅ moeda pt-BR com vírgula
+const formatMoneyBR = (v) =>
+  new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(toNumber(v));
+
+// ✅ helpers para separar base e adicionais (com fallbacks)
+const getBaseUnit = (item) => {
+  return toNumber(item?.precoBaseUnitario ?? item?.precoBase ?? item?.preco);
+};
+
+const getAdicionalUnit = (item) => {
+  const direto = toNumber(item?.adicionaisTotal);
+  if (direto > 0) return direto;
+
+  // fallback: se só tiver unit final
+  const base = getBaseUnit(item);
+  const unitFinal = toNumber(item?.precoUnitarioFinal ?? item?.preco);
+  const diff = unitFinal - base;
+  return diff > 0 ? diff : 0;
+};
+
+const getUnitFinal = (item) => {
+  const unitFinal = toNumber(item?.precoUnitarioFinal);
+  if (unitFinal > 0) return unitFinal;
+
+  const base = getBaseUnit(item);
+  const add = getAdicionalUnit(item);
+  return base + add;
+};
 
 const Pedidos = ({ user }) => {
   const isMobile = useIsMobile();
@@ -389,7 +416,7 @@ const Pedidos = ({ user }) => {
       borderBottom: '1px solid #E2E8F0',
       background: '#F8FAFC'
     },
-    histTitle: (color) => ({
+    histTitle: () => ({
       display: 'flex',
       alignItems: 'center',
       gap: '10px',
@@ -457,10 +484,10 @@ const Pedidos = ({ user }) => {
   };
 
   const renderHistoricoGrid = () => {
-    const renderTabela = (titulo, icon, color, lista) => (
+    const renderTabela = (titulo, icon, lista) => (
       <div style={styles.histWrap}>
         <div style={styles.histHeader}>
-          <div style={styles.histTitle(color)}>
+          <div style={styles.histTitle()}>
             {icon}
             <span>{titulo}</span>
             <span style={styles.badgeCount}>{lista.length}</span>
@@ -553,35 +580,68 @@ const Pedidos = ({ user }) => {
 
                 {expandido && (
                   <div style={styles.expandBox}>
-                    <div style={{ fontSize: '12px', fontWeight: 900, color: '#64748B', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div style={{
+                      fontSize: '12px',
+                      fontWeight: 900,
+                      color: '#64748B',
+                      marginBottom: 10,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8
+                    }}>
                       <Package size={14} /> ITENS DO PEDIDO
                     </div>
 
-                    {(pedido.itens || []).map((item, i) => (
-                      <div key={i} style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        padding: '8px 10px',
-                        background: 'white',
-                        borderRadius: '10px',
-                        border: '1px solid #E2E8F0',
-                        marginBottom: '8px'
-                      }}>
-                        <div>
-                          <div style={{ fontWeight: 900, color: '#0F3460', fontSize: '13px' }}>
-                            {item.quantidade}x {item.nome}
-                          </div>
-                          {item.adicionaisTexto && (
-                            <div style={{ fontSize: '12px', color: '#64748B', marginTop: 2 }}>
-                              + {item.adicionaisTexto}
+                    {(pedido.itens || []).map((item, i) => {
+                      const base = getBaseUnit(item);
+                      const add = getAdicionalUnit(item);
+                      const unitFinal = getUnitFinal(item);
+                      const qtd = toNumber(item?.quantidade) || 1;
+                      const totalItem = toNumber(item?.precoTotal) || (unitFinal * qtd);
+
+                      return (
+                        <div key={i} style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          gap: '12px',
+                          padding: '10px 12px',
+                          background: 'white',
+                          borderRadius: '10px',
+                          border: '1px solid #E2E8F0',
+                          marginBottom: '8px'
+                        }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: 900, color: '#0F3460', fontSize: '13px' }}>
+                              {qtd}x {item.nome}
                             </div>
-                          )}
+
+                            <div style={{ fontSize: '12px', color: '#334155', marginTop: 6 }}>
+                              {formatMoneyBR(base)} lanche
+                            </div>
+
+                            {add > 0 && (
+                              <div style={{ fontSize: '12px', color: '#334155', marginTop: 2 }}>
+                                {formatMoneyBR(add)} adicional
+                              </div>
+                            )}
+
+                            {item.adicionaisTexto && (
+                              <div style={{ fontSize: '12px', color: '#64748B', marginTop: 2, fontStyle: 'italic' }}>
+                                + {item.adicionaisTexto}
+                              </div>
+                            )}
+
+                            <div style={{ fontSize: '12px', color: '#10B981', marginTop: 4, fontWeight: 800 }}>
+                              Unit final: {formatMoneyBR(unitFinal)}
+                            </div>
+                          </div>
+
+                          <div style={{ fontWeight: 900, color: '#0F3460', whiteSpace: 'nowrap' }}>
+                            {formatMoneyBR(totalItem)}
+                          </div>
                         </div>
-                        <div style={{ fontWeight: 900, color: '#0F3460' }}>
-                          {formatMoneyBR(item.precoTotal || (toNumber(item.precoUnitarioFinal || item.preco) * toNumber(item.quantidade)))}
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -597,8 +657,8 @@ const Pedidos = ({ user }) => {
         gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr',
         gap: '16px'
       }}>
-        {renderTabela('Aceitas (Entregue/Concluído)', <CheckCircle size={18} color="#10B981" />, '#10B981', historicoAceitas)}
-        {renderTabela('Canceladas', <XCircle size={18} color="#EF4444" />, '#EF4444', historicoCanceladas)}
+        {renderTabela('Aceitas (Entregue/Concluído)', <CheckCircle size={18} color="#10B981" />, historicoAceitas)}
+        {renderTabela('Canceladas', <XCircle size={18} color="#EF4444" />, historicoCanceladas)}
       </div>
     );
   };
@@ -684,7 +744,7 @@ const Pedidos = ({ user }) => {
               { label: 'ENTREGA', value: stats.entrega, color: '#8B5CF6', icon: <Truck size={20} /> },
               { label: 'CONCLUÍDOS', value: stats.concluidos, color: '#10B981', icon: <CheckCircle size={20} /> },
               { label: 'HOJE', value: stats.totalHoje, color: '#8B5CF6', icon: <Star size={20} /> },
-              { label: 'FATURAMENTO HOJE', value: `R$ ${stats.valorHoje.toFixed(2)}`, color: '#10B981', icon: <CreditCard size={20} /> }
+              { label: 'FATURAMENTO HOJE', value: formatMoneyBR(stats.valorHoje), color: '#10B981', icon: <CreditCard size={20} /> }
             ].map((stat, index) => (
               <div key={index} style={{
                 background: 'rgba(255, 255, 255, 0.9)',
@@ -939,11 +999,10 @@ const Pedidos = ({ user }) => {
           </div>
         ) : (
           <>
-            {/* ✅ Se for histórico: renderiza em LINHA + GRID Aceitas/Canceladas */}
+            {/* ✅ Se for histórico */}
             {tabAtiva === 'historico' ? (
               renderHistoricoGrid()
             ) : (
-              // ✅ Para pendente/preparo/entrega mantém os cards (seu layout atual)
               <div style={{
                 display: 'grid',
                 gridTemplateColumns: isMobile ? '1fr' : 'repeat(auto-fill, minmax(420px, 1fr))',
@@ -1127,28 +1186,49 @@ const Pedidos = ({ user }) => {
                             <Package size={12} /> DETALHES DO PEDIDO
                           </div>
 
-                          {pedido.itens?.map((item, i) => (
-                            <div key={i} style={{ borderBottom: '1px dashed #E2E8F0', paddingBottom: '12px', marginBottom: '12px' }}>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                                <div style={{ flex: 1 }}>
-                                  <div style={{ fontWeight: '800', fontSize: '14px', color: '#0F3460' }}>
-                                    {item.quantidade}x {item.nome}
-                                  </div>
-                                  {item.adicionaisTexto && (
-                                    <div style={{ fontSize: '12px', color: '#64748B', marginTop: '4px', fontStyle: 'italic' }}>
-                                      + {item.adicionaisTexto}
+                          {pedido.itens?.map((item, i) => {
+                            const base = getBaseUnit(item);
+                            const add = getAdicionalUnit(item);
+                            const unitFinal = getUnitFinal(item);
+                            const qtd = toNumber(item?.quantidade) || 1;
+                            const totalItem = toNumber(item?.precoTotal) || (unitFinal * qtd);
+
+                            return (
+                              <div key={i} style={{ borderBottom: '1px dashed #E2E8F0', paddingBottom: '12px', marginBottom: '12px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px' }}>
+                                  <div style={{ flex: 1 }}>
+                                    <div style={{ fontWeight: '800', fontSize: '14px', color: '#0F3460' }}>
+                                      {qtd}x {item.nome}
                                     </div>
-                                  )}
-                                  <div style={{ fontSize: '12px', color: '#10B981', marginTop: '2px' }}>
-                                    Unit: {formatMoneyBR(item.precoUnitarioFinal || item.preco)}
+
+                                    <div style={{ fontSize: '12px', color: '#334155', marginTop: 6 }}>
+                                      {formatMoneyBR(base)} lanche
+                                    </div>
+
+                                    {add > 0 && (
+                                      <div style={{ fontSize: '12px', color: '#334155', marginTop: 2 }}>
+                                        {formatMoneyBR(add)} adicional
+                                      </div>
+                                    )}
+
+                                    {item.adicionaisTexto && (
+                                      <div style={{ fontSize: '12px', color: '#64748B', marginTop: '4px', fontStyle: 'italic' }}>
+                                        + {item.adicionaisTexto}
+                                      </div>
+                                    )}
+
+                                    <div style={{ fontSize: '12px', color: '#10B981', marginTop: '4px', fontWeight: 800 }}>
+                                      Unit final: {formatMoneyBR(unitFinal)}
+                                    </div>
                                   </div>
-                                </div>
-                                <div style={{ fontWeight: '800', fontSize: '14px', color: '#0F3460' }}>
-                                  {formatMoneyBR(item.precoTotal || (toNumber(item.precoUnitarioFinal || item.preco) * item.quantidade))}
+
+                                  <div style={{ fontWeight: '800', fontSize: '14px', color: '#0F3460', whiteSpace: 'nowrap' }}>
+                                    {formatMoneyBR(totalItem)}
+                                  </div>
                                 </div>
                               </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       )}
 
