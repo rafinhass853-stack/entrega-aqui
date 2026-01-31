@@ -43,7 +43,6 @@ const Cadastro = ({ onVoltar, onContinuar, dadosCliente: dadosIniciais, modoChec
 
   const formatarTelefone = (valor) => {
     const limpo = limparTelefone(valor);
-    // (16) 99999-9999 ou (16) 9999-9999
     if (limpo.length <= 10) {
       return limpo
         .replace(/^(\d{2})(\d)/g, '($1) $2')
@@ -106,9 +105,6 @@ const Cadastro = ({ onVoltar, onContinuar, dadosCliente: dadosIniciais, modoChec
     }
   };
 
-  // ✅ Regras do "já logar" por telefone:
-  // - Busca em /clientes (mesmo nível de /estabelecimentos)
-  // - Se encontrar e tiver dados mínimos, salva no localStorage e chama onContinuar automaticamente
   const temEnderecoMinimo = (d) =>
     Boolean(String(d?.rua || '').trim()) &&
     Boolean(String(d?.numero || '').trim()) &&
@@ -129,14 +125,12 @@ const Cadastro = ({ onVoltar, onContinuar, dadosCliente: dadosIniciais, modoChec
       localStorage.setItem('dadosCliente', JSON.stringify(payloadLocal));
       setAutoLogando(true);
 
-      // chama e fecha a tela (se sua navegação usa isso)
       onContinuar(payloadLocal);
 
       setTimeout(() => setAutoLogando(false), 1200);
       return true;
     }
 
-    // Se está no checkout e não tem endereço completo, manda direto pra etapa endereço
     if (modoCheckout && temDadosMinimos({ ...dadosEncontrados, telefone: tel }) && !temEnderecoMinimo(dadosEncontrados)) {
       setEtapa('endereco');
     }
@@ -144,13 +138,18 @@ const Cadastro = ({ onVoltar, onContinuar, dadosCliente: dadosIniciais, modoChec
     return false;
   };
 
+  // ✅ NOVO: status do telefone
+  const telLimpoAtual = limparTelefone(dados.telefone);
+  const telefoneValido = /^\d{10,11}$/.test(telLimpoAtual);
+
   useEffect(() => {
-    const telLimpo = limparTelefone(dados.telefone);
-    if (telLimpo.length >= 10) {
-      const delay = setTimeout(() => buscarCadastro(telLimpo), 700);
+    if (telLimpoAtual.length >= 10) {
+      const delay = setTimeout(() => buscarCadastro(telLimpoAtual), 700);
       return () => clearTimeout(delay);
     } else {
       setClienteIdNoBanco(null);
+      // opcional: se apagar o telefone, mantém o nome mas poderia limpar:
+      // setDados(prev => ({...prev, nomeCompleto: ''}))
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dados.telefone]);
@@ -160,17 +159,17 @@ const Cadastro = ({ onVoltar, onContinuar, dadosCliente: dadosIniciais, modoChec
 
     setBuscandoTelefone(true);
     try {
-      // ✅ coleção clientes (mesma “linha” de estabelecimentos)
       const q = query(collection(db, 'clientes'), where('telefone', '==', telLimpo), limit(1));
       const snap = await getDocs(q);
 
       if (!snap.empty) {
         const docSnap = snap.docs[0];
         const dadosDB = docSnap.data() || {};
+
         const merged = {
-          ...dados,
           ...dadosDB,
-          telefone: formatarTelefone(telLimpo) // mantém exibindo formatado
+          ...dados,
+          telefone: formatarTelefone(telLimpo)
         };
 
         setClienteIdNoBanco(docSnap.id);
@@ -179,8 +178,12 @@ const Cadastro = ({ onVoltar, onContinuar, dadosCliente: dadosIniciais, modoChec
         setCadastroEncontrado(true);
         setTimeout(() => setCadastroEncontrado(false), 4000);
 
-        // ✅ já loga automaticamente se puder
-        autoLoginSePossivel({ ...merged, telefone: telLimpo });
+        // ✅ FIX: checkout auto-login | fora do checkout vai para edição
+        if (modoCheckout) {
+          autoLoginSePossivel({ ...merged, telefone: telLimpo });
+        } else {
+          setEtapa('endereco');
+        }
       } else {
         setClienteIdNoBanco(null);
       }
@@ -326,7 +329,8 @@ const Cadastro = ({ onVoltar, onContinuar, dadosCliente: dadosIniciais, modoChec
       justifyContent: 'center',
       gap: '12px',
       transition: 'all 0.3s ease',
-      boxShadow: '0 4px 15px rgba(16, 185, 129, 0.3)'
+      boxShadow: '0 4px 15px rgba(16, 185, 129, 0.3)',
+      opacity: 1
     },
     btnSecundario: {
       width: '100%',
@@ -425,7 +429,8 @@ const Cadastro = ({ onVoltar, onContinuar, dadosCliente: dadosIniciais, modoChec
         <div style={styles.infoContent}>
           <div style={styles.infoTitle}>Login por telefone</div>
           <div style={styles.infoText}>
-            Se seu telefone já estiver cadastrado, você entra automaticamente. Se não, você conclui o cadastro.
+            Digite seu telefone primeiro. Se já existir cadastro, nós preenchemos automaticamente.
+            {modoCheckout ? ' No checkout, você entra automaticamente se estiver completo.' : ' Fora do checkout, abrimos para você editar.'}
           </div>
         </div>
       </div>
@@ -434,19 +439,7 @@ const Cadastro = ({ onVoltar, onContinuar, dadosCliente: dadosIniciais, modoChec
         <UserCheck size={18} /> SEUS DADOS PESSOAIS
       </div>
 
-      <div style={styles.inputGroup}>
-        <label style={styles.label}>
-          <User size={16} /> Nome Completo *
-        </label>
-        <input
-          type="text"
-          value={dados.nomeCompleto}
-          onChange={(e) => setDados({ ...dados, nomeCompleto: e.target.value })}
-          placeholder="Ex: Rafael de Sousa"
-          style={styles.input}
-        />
-      </div>
-
+      {/* ✅ TELEFONE PRIMEIRO */}
       <div style={styles.inputGroup}>
         <label style={styles.label}>
           <Phone size={16} />
@@ -480,9 +473,28 @@ const Cadastro = ({ onVoltar, onContinuar, dadosCliente: dadosIniciais, modoChec
             }}
           >
             <Shield size={14} />
-            Cadastro encontrado! Entrando automaticamente (se estiver completo)...
+            Cadastro encontrado! {modoCheckout ? 'Entrando automaticamente (se estiver completo)...' : 'Abrindo para edição...'}
           </div>
         )}
+      </div>
+
+      {/* ✅ NOME DEPOIS (só habilita com telefone válido) */}
+      <div style={styles.inputGroup}>
+        <label style={styles.label}>
+          <User size={16} /> Nome Completo *
+        </label>
+        <input
+          type="text"
+          value={dados.nomeCompleto}
+          onChange={(e) => setDados({ ...dados, nomeCompleto: e.target.value })}
+          placeholder={telefoneValido ? 'Ex: Rafael de Sousa' : 'Digite o telefone primeiro'}
+          style={{
+            ...styles.input,
+            opacity: telefoneValido ? 1 : 0.6,
+            cursor: telefoneValido ? 'text' : 'not-allowed'
+          }}
+          disabled={!telefoneValido || buscandoTelefone || autoLogando}
+        />
       </div>
 
       <div style={styles.inputGroup}>
@@ -498,8 +510,12 @@ const Cadastro = ({ onVoltar, onContinuar, dadosCliente: dadosIniciais, modoChec
 
       <button
         onClick={() => setEtapa('endereco')}
-        disabled={!dados.nomeCompleto || !/^\d{10,11}$/.test(limparTelefone(dados.telefone))}
-        style={styles.btn}
+        disabled={!telefoneValido || !String(dados.nomeCompleto || '').trim()}
+        style={{
+          ...styles.btn,
+          opacity: !telefoneValido || !String(dados.nomeCompleto || '').trim() ? 0.6 : 1,
+          cursor: !telefoneValido || !String(dados.nomeCompleto || '').trim() ? 'not-allowed' : 'pointer'
+        }}
       >
         Continuar para Endereço
         <ArrowLeft size={20} style={{ transform: 'rotate(180deg)' }} />
