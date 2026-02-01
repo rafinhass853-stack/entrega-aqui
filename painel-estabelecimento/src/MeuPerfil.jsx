@@ -1,64 +1,66 @@
 // MeuPerfil.jsx
-import React, { useState, useEffect } from 'react';
-import { Layout } from './Menu';
-import { db, storage } from './firebase';
+import React, { useState, useEffect } from "react";
+import { Layout } from "./Menu";
+import { db, storage, auth } from "./firebase";
+import { doc, getDoc, serverTimestamp, setDoc } from "firebase/firestore";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { updatePassword, reauthenticateWithCredential, EmailAuthProvider } from "firebase/auth";
 import {
-  doc,
-  getDoc,
-  updateDoc,
-  serverTimestamp,
-  setDoc
-} from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import {
-  updatePassword, reauthenticateWithCredential, EmailAuthProvider
-} from 'firebase/auth';
-import {
-  User, Mail, Phone, MapPin, Camera,
-  Lock, Save, AlertCircle,
-  Building, FileText, CheckCircle
-} from 'lucide-react';
+  User,
+  Mail,
+  Phone,
+  MapPin,
+  Camera,
+  Lock,
+  Save,
+  AlertCircle,
+  Building,
+  FileText,
+  CheckCircle,
+  Clock
+} from "lucide-react";
 
 const MeuPerfil = ({ user, isMobile }) => {
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [mensagem, setMensagem] = useState({ tipo: '', texto: '' });
+  const [mensagem, setMensagem] = useState({ tipo: "", texto: "" });
 
   const horarioPadrao = {
-    segunda: { abre: '09:00', fecha: '18:00' },
-    terca: { abre: '09:00', fecha: '18:00' },
-    quarta: { abre: '09:00', fecha: '18:00' },
-    quinta: { abre: '09:00', fecha: '18:00' },
-    sexta: { abre: '09:00', fecha: '18:00' },
-    sabado: { abre: '09:00', fecha: '18:00' },
-    domingo: { abre: '09:00', fecha: '18:00' }
+    segunda: { abre: "09:00", fecha: "18:00" },
+    terca: { abre: "09:00", fecha: "18:00" },
+    quarta: { abre: "09:00", fecha: "18:00" },
+    quinta: { abre: "09:00", fecha: "18:00" },
+    sexta: { abre: "09:00", fecha: "18:00" },
+    sabado: { abre: "09:00", fecha: "18:00" },
+    domingo: { abre: "09:00", fecha: "18:00" }
   };
 
   const [perfil, setPerfil] = useState({
-    loginUsuario: '',
-    cnpj: '',
-    whatsappFormatado: '',
-    loginEmail: '',
+    loginUsuario: "",
+    cnpj: "",
+    whatsappFormatado: "",
+    loginEmail: "",
     endereco: {
-      rua: '',
-      numero: '',
-      bairro: '',
-      cidade: '',
-      estado: '',
-      cep: ''
+      rua: "",
+      numero: "",
+      bairro: "",
+      cidade: "",
+      estado: "",
+      cep: ""
     },
     fotoUrl: null,
     fotoPreview: null,
-    descricao: '',
-    // ✅ Agora isso vai ser salvo na SUBCOLEÇÃO
+    descricao: "",
+    // ✅ novo: tempo de atendimento/entrega (min)
+    tempoEntrega: 45,
+    // ✅ salvo na subcoleção
     horarioFuncionamento: horarioPadrao
   });
 
-  const [senhaAtual, setSenhaAtual] = useState('');
-  const [novaSenha, setNovaSenha] = useState('');
-  const [confirmarSenha, setConfirmarSenha] = useState('');
+  const [senhaAtual, setSenhaAtual] = useState("");
+  const [novaSenha, setNovaSenha] = useState("");
+  const [confirmarSenha, setConfirmarSenha] = useState("");
 
-  // Buscar perfil
   useEffect(() => {
     if (user?.uid) fetchPerfil();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -66,75 +68,73 @@ const MeuPerfil = ({ user, isMobile }) => {
 
   const showMensagem = (tipo, texto, tempo = 5000) => {
     setMensagem({ tipo, texto });
-    setTimeout(() => setMensagem({ tipo: '', texto: '' }), tempo);
+    setTimeout(() => setMensagem({ tipo: "", texto: "" }), tempo);
   };
 
   const fetchPerfil = async () => {
     try {
-      const perfilRef = doc(db, 'estabelecimentos', user.uid);
+      const perfilRef = doc(db, "estabelecimentos", user.uid);
       const perfilSnap = await getDoc(perfilRef);
 
       // ✅ Horário vem da subcoleção: estabelecimentos/{uid}/config/horario
-      const horarioRef = doc(db, 'estabelecimentos', user.uid, 'config', 'horario');
+      const horarioRef = doc(db, "estabelecimentos", user.uid, "config", "horario");
       const horarioSnap = await getDoc(horarioRef);
 
-      const horarioDb = horarioSnap.exists()
-        ? (horarioSnap.data()?.horarioFuncionamento || null)
-        : null;
+      const horarioDb = horarioSnap.exists() ? horarioSnap.data()?.horarioFuncionamento || null : null;
 
       if (perfilSnap.exists()) {
         const data = perfilSnap.data();
 
-        setPerfil(prev => ({
+        setPerfil((prev) => ({
           ...prev,
-          loginUsuario: data.loginUsuario || '',
-          cnpj: data.cnpj || '',
-          whatsappFormatado: data.whatsappFormatado || '',
-          loginEmail: data.loginEmail || user.email || '',
+          loginUsuario: data.loginUsuario || "",
+          cnpj: data.cnpj || "",
+          whatsappFormatado: data.whatsappFormatado || "",
+          loginEmail: data.loginEmail || user.email || "",
           endereco: data.endereco || prev.endereco,
           fotoUrl: data.fotoUrl || null,
-          descricao: data.descricao || '',
-          // ✅ se não existir no banco, usa padrão
+          descricao: data.descricao || "",
+          tempoEntrega: Number(data.tempoEntrega ?? data.tempoAtendimento ?? 45),
           horarioFuncionamento: horarioDb || prev.horarioFuncionamento
         }));
       } else {
-        // Mesmo sem doc, pelo menos carrega o horário (se existir)
-        setPerfil(prev => ({
+        setPerfil((prev) => ({
           ...prev,
-          loginEmail: user.email || '',
+          loginEmail: user.email || "",
+          tempoEntrega: 45,
           horarioFuncionamento: horarioDb || prev.horarioFuncionamento
         }));
       }
     } catch (error) {
-      console.error('Erro ao buscar perfil:', error);
-      showMensagem('error', 'Erro ao carregar perfil');
+      console.error("Erro ao buscar perfil:", error);
+      showMensagem("error", "Erro ao carregar perfil");
     }
   };
 
   // Máscaras
   const maskCNPJ = (value) => {
     return value
-      .replace(/\D/g, '')
-      .replace(/^(\d{2})(\d)/, '$1.$2')
-      .replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3')
-      .replace(/\.(\d{3})(\d)/, '.$1/$2')
-      .replace(/(\d{4})(\d)/, '$1-$2')
+      .replace(/\D/g, "")
+      .replace(/^(\d{2})(\d)/, "$1.$2")
+      .replace(/^(\d{2})\.(\d{3})(\d)/, "$1.$2.$3")
+      .replace(/\.(\d{3})(\d)/, ".$1/$2")
+      .replace(/(\d{4})(\d)/, "$1-$2")
       .slice(0, 18);
   };
 
   const maskPhone = (value) => {
     return value
-      .replace(/\D/g, '')
-      .replace(/^(\d{2})(\d)/, '($1) $2')
-      .replace(/(\d)(\d{4})$/, '$1-$2')
+      .replace(/\D/g, "")
+      .replace(/^(\d{2})(\d)/, "($1) $2")
+      .replace(/(\d)(\d{4})$/, "$1-$2")
       .slice(0, 15);
   };
 
   const maskCEP = (value) => {
     return value
-      .replace(/\D/g, '')
-      .replace(/^(\d{2})(\d)/, '$1.$2')
-      .replace(/\.(\d{3})(\d)/, '.$1-$2')
+      .replace(/\D/g, "")
+      .replace(/^(\d{2})(\d)/, "$1.$2")
+      .replace(/\.(\d{3})(\d)/, ".$1-$2")
       .slice(0, 10);
   };
 
@@ -154,7 +154,7 @@ const MeuPerfil = ({ user, isMobile }) => {
       setUploading(false);
       return url;
     } catch (error) {
-      console.error('Erro ao fazer upload:', error);
+      console.error("Erro ao fazer upload:", error);
       setUploading(false);
       return null;
     }
@@ -164,22 +164,22 @@ const MeuPerfil = ({ user, isMobile }) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const tiposPermitidos = ['image/jpeg', 'image/png', 'image/webp'];
+    const tiposPermitidos = ["image/jpeg", "image/png", "image/webp"];
     const tamanhoMaximo = 5 * 1024 * 1024;
 
     if (!tiposPermitidos.includes(file.type)) {
-      showMensagem('error', 'Formato inválido. Use JPG, PNG ou WebP.');
+      showMensagem("error", "Formato inválido. Use JPG, PNG ou WebP.");
       return;
     }
     if (file.size > tamanhoMaximo) {
-      showMensagem('error', 'Imagem muito grande. Máximo: 5MB');
+      showMensagem("error", "Imagem muito grande. Máximo: 5MB");
       return;
     }
 
-    setPerfil(prev => ({ ...prev, fotoUrl: file }));
+    setPerfil((prev) => ({ ...prev, fotoUrl: file }));
 
     const reader = new FileReader();
-    reader.onload = (ev) => setPerfil(prev => ({ ...prev, fotoPreview: ev.target.result }));
+    reader.onload = (ev) => setPerfil((prev) => ({ ...prev, fotoPreview: ev.target.result }));
     reader.readAsDataURL(file);
   };
 
@@ -198,24 +198,29 @@ const MeuPerfil = ({ user, isMobile }) => {
         if (uploaded) fotoUrlFinal = uploaded;
       }
 
-      // 1) Atualiza o doc principal SEM horário
-      const perfilRef = doc(db, 'estabelecimentos', user.uid);
+      const tempoEntregaNum = Number(perfil.tempoEntrega);
+      const tempoEntregaFinal = Number.isFinite(tempoEntregaNum) ? Math.max(0, Math.min(999, tempoEntregaNum)) : 45;
+
+      // 1) Salva/atualiza o doc principal (com merge)
+      const perfilRef = doc(db, "estabelecimentos", user.uid);
       const dadosAtualizados = {
-        loginUsuario: (perfil.loginUsuario || '').trim(),
-        cnpj: perfil.cnpj || '',
-        whatsappFormatado: perfil.whatsappFormatado || '',
-        whatsapp: (perfil.whatsappFormatado || '').replace(/\D/g, ''),
-        loginEmail: perfil.loginEmail || user.email || '',
+        loginUsuario: (perfil.loginUsuario || "").trim(),
+        cnpj: perfil.cnpj || "",
+        whatsappFormatado: perfil.whatsappFormatado || "",
+        whatsapp: (perfil.whatsappFormatado || "").replace(/\D/g, ""),
+        loginEmail: perfil.loginEmail || user.email || "",
         endereco: perfil.endereco || {},
         fotoUrl: fotoUrlFinal || null,
-        descricao: perfil.descricao || '',
+        descricao: perfil.descricao || "",
+        // ✅ novo: tempo de atendimento/entrega (min)
+        tempoEntrega: tempoEntregaFinal,
         atualizadoEm: serverTimestamp()
       };
 
-      await updateDoc(perfilRef, dadosAtualizados);
+      await setDoc(perfilRef, dadosAtualizados, { merge: true });
 
       // 2) Salva horário na SUBCOLEÇÃO: estabelecimentos/{uid}/config/horario
-      const horarioRef = doc(db, 'estabelecimentos', user.uid, 'config', 'horario');
+      const horarioRef = doc(db, "estabelecimentos", user.uid, "config", "horario");
       await setDoc(
         horarioRef,
         {
@@ -225,247 +230,275 @@ const MeuPerfil = ({ user, isMobile }) => {
         { merge: true }
       );
 
-      showMensagem('success', 'Perfil e horário salvos com sucesso!');
+      showMensagem("success", "Perfil e configurações salvos com sucesso!");
     } catch (error) {
-      console.error('Erro ao salvar perfil:', error);
-      showMensagem('error', 'Erro ao salvar perfil');
+      console.error("Erro ao salvar perfil:", error);
+      showMensagem("error", "Erro ao salvar perfil");
     } finally {
       setLoading(false);
     }
   };
 
-  // Alterar senha
+  // ✅ Alterar senha (AGORA CERTO)
   const alterarSenha = async (e) => {
     e.preventDefault();
 
     if (novaSenha !== confirmarSenha) {
-      showMensagem('error', 'As senhas não coincidem');
+      showMensagem("error", "As senhas não coincidem");
       return;
     }
-    if (novaSenha.length < 6) {
-      showMensagem('error', 'A senha deve ter no mínimo 6 caracteres');
+    if ((novaSenha || "").length < 6) {
+      showMensagem("error", "A senha deve ter no mínimo 6 caracteres");
       return;
     }
 
     setLoading(true);
 
     try {
-      const credential = EmailAuthProvider.credential(user.email, senhaAtual);
-      await reauthenticateWithCredential(user, credential);
-      await updatePassword(user, novaSenha);
+      const authUser = auth.currentUser; // ✅ usuário real do Firebase Auth
 
-      setSenhaAtual('');
-      setNovaSenha('');
-      setConfirmarSenha('');
+      if (!authUser) {
+        showMensagem("error", "Sessão expirada. Faça login novamente e tente de novo.");
+        setLoading(false);
+        return;
+      }
 
-      showMensagem('success', 'Senha alterada com sucesso!');
+      const email = String(authUser.email || user?.email || "").trim();
+      if (!email) {
+        showMensagem("error", "Este usuário não possui e-mail no Auth para trocar senha.");
+        setLoading(false);
+        return;
+      }
+
+      const credential = EmailAuthProvider.credential(email, senhaAtual);
+      await reauthenticateWithCredential(authUser, credential);
+      await updatePassword(authUser, novaSenha);
+
+      setSenhaAtual("");
+      setNovaSenha("");
+      setConfirmarSenha("");
+
+      showMensagem("success", "Senha alterada com sucesso!");
     } catch (error) {
-      console.error('Erro ao alterar senha:', error);
-      showMensagem('error', 'Erro ao alterar senha. Verifique a senha atual.');
+      console.error("Erro ao alterar senha:", error);
+
+      const code = String(error?.code || "");
+      if (code.includes("auth/wrong-password") || code.includes("auth/invalid-credential")) {
+        showMensagem("error", "Senha atual incorreta.");
+      } else if (code.includes("auth/requires-recent-login")) {
+        showMensagem("error", "Por segurança, faça login novamente e tente trocar a senha.");
+      } else {
+        showMensagem("error", "Erro ao alterar senha. Verifique a senha atual e tente novamente.");
+      }
     } finally {
       setLoading(false);
     }
   };
 
   const estados = [
-    'AC','AL','AP','AM','BA','CE','DF','ES','GO',
-    'MA','MT','MS','MG','PA','PB','PR','PE','PI',
-    'RJ','RN','RS','RO','RR','SC','SP','SE','TO'
+    "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO",
+    "MA", "MT", "MS", "MG", "PA", "PB", "PR", "PE", "PI",
+    "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO"
   ];
 
   const styles = {
-    container: { maxWidth: '1200px', margin: '0 auto', width: '100%' },
+    container: { maxWidth: "1200px", margin: "0 auto", width: "100%" },
     header: {
-      marginBottom: '30px',
-      paddingBottom: '20px',
-      borderBottom: '1px solid rgba(79, 209, 197, 0.08)'
+      marginBottom: "30px",
+      paddingBottom: "20px",
+      borderBottom: "1px solid rgba(79, 209, 197, 0.08)"
     },
-    title: { color: '#4FD1C5', fontSize: '28px', marginBottom: '8px' },
-    subtitle: { color: '#81E6D9', opacity: 0.8 },
+    title: { color: "#4FD1C5", fontSize: "28px", marginBottom: "8px" },
+    subtitle: { color: "#81E6D9", opacity: 0.8 },
     mensagem: (tipo) => ({
-      padding: '15px 20px',
-      borderRadius: '8px',
-      marginBottom: '20px',
-      backgroundColor: tipo === 'success' ? 'rgba(16, 185, 129, 0.1)' :
-        tipo === 'error' ? 'rgba(245, 101, 101, 0.1)' :
-          'rgba(79, 209, 197, 0.1)',
-      border: `1px solid ${tipo === 'success' ? '#10B98140' : tipo === 'error' ? '#F5656540' : '#4FD1C540'}`,
-      color: tipo === 'success' ? '#10B981' : tipo === 'error' ? '#F56565' : '#4FD1C5',
-      display: 'flex',
-      alignItems: 'center',
-      gap: '10px'
+      padding: "15px 20px",
+      borderRadius: "8px",
+      marginBottom: "20px",
+      backgroundColor:
+        tipo === "success"
+          ? "rgba(16, 185, 129, 0.1)"
+          : tipo === "error"
+          ? "rgba(245, 101, 101, 0.1)"
+          : "rgba(79, 209, 197, 0.1)",
+      border: `1px solid ${
+        tipo === "success" ? "#10B98140" : tipo === "error" ? "#F5656540" : "#4FD1C540"
+      }`,
+      color: tipo === "success" ? "#10B981" : tipo === "error" ? "#F56565" : "#4FD1C5",
+      display: "flex",
+      alignItems: "center",
+      gap: "10px"
     }),
     grid: {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))',
-      gap: '30px',
-      alignItems: 'start'
+      display: "grid",
+      gridTemplateColumns: "repeat(auto-fit, minmax(350px, 1fr))",
+      gap: "30px",
+      alignItems: "start"
     },
     card: {
-      backgroundColor: 'rgba(0, 35, 40, 0.6)',
-      border: '1px solid rgba(79, 209, 197, 0.12)',
-      borderRadius: '12px',
-      padding: '30px'
+      backgroundColor: "rgba(0, 35, 40, 0.6)",
+      border: "1px solid rgba(79, 209, 197, 0.12)",
+      borderRadius: "12px",
+      padding: "30px"
     },
     sectionTitle: {
-      color: '#4FD1C5',
-      fontSize: '18px',
-      marginBottom: '25px',
-      display: 'flex',
-      alignItems: 'center',
-      gap: '10px'
+      color: "#4FD1C5",
+      fontSize: "18px",
+      marginBottom: "25px",
+      display: "flex",
+      alignItems: "center",
+      gap: "10px"
     },
     fotoContainer: {
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      gap: '20px',
-      marginBottom: '30px'
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      gap: "20px",
+      marginBottom: "30px"
     },
     fotoWrapper: {
-      width: '200px',
-      height: '200px',
-      borderRadius: '50%',
-      overflow: 'hidden',
-      border: '3px solid rgba(79, 209, 197, 0.3)',
-      backgroundColor: 'rgba(0, 0, 0, 0.2)',
-      position: 'relative'
+      width: "200px",
+      height: "200px",
+      borderRadius: "50%",
+      overflow: "hidden",
+      border: "3px solid rgba(79, 209, 197, 0.3)",
+      backgroundColor: "rgba(0, 0, 0, 0.2)",
+      position: "relative"
     },
-    foto: { width: '100%', height: '100%', objectFit: 'cover' },
+    foto: { width: "100%", height: "100%", objectFit: "cover" },
     fotoPlaceholder: {
-      width: '100%',
-      height: '100%',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: 'rgba(79, 209, 197, 0.15)',
-      color: '#4FD1C5',
-      fontSize: '60px',
-      fontWeight: 'bold'
+      width: "100%",
+      height: "100%",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: "rgba(79, 209, 197, 0.15)",
+      color: "#4FD1C5",
+      fontSize: "60px",
+      fontWeight: "bold"
     },
     fotoActions: {
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '10px',
-      width: '100%',
-      alignItems: 'center'
+      display: "flex",
+      flexDirection: "column",
+      gap: "10px",
+      width: "100%",
+      alignItems: "center"
     },
     btnUpload: {
-      backgroundColor: '#4FD1C5',
-      color: '#00171A',
-      border: 'none',
-      padding: '12px 24px',
-      borderRadius: '8px',
-      cursor: 'pointer',
-      fontWeight: 'bold',
-      display: 'flex',
-      alignItems: 'center',
-      gap: '8px',
-      width: '100%',
-      maxWidth: '250px',
-      justifyContent: 'center'
+      backgroundColor: "#4FD1C5",
+      color: "#00171A",
+      border: "none",
+      padding: "12px 24px",
+      borderRadius: "8px",
+      cursor: "pointer",
+      fontWeight: "bold",
+      display: "flex",
+      alignItems: "center",
+      gap: "8px",
+      width: "100%",
+      maxWidth: "250px",
+      justifyContent: "center"
     },
-    fotoHint: { color: '#A0AEC0', fontSize: '12px', textAlign: 'center', marginTop: '10px' },
-    form: { display: 'flex', flexDirection: 'column', gap: '20px' },
+    fotoHint: { color: "#A0AEC0", fontSize: "12px", textAlign: "center", marginTop: "10px" },
+    form: { display: "flex", flexDirection: "column", gap: "20px" },
     formGrid: {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
-      gap: '20px'
+      display: "grid",
+      gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
+      gap: "20px"
     },
-    inputGroup: { display: 'flex', flexDirection: 'column', gap: '8px' },
+    inputGroup: { display: "flex", flexDirection: "column", gap: "8px" },
     label: {
-      color: '#81E6D9',
-      fontSize: '14px',
-      fontWeight: '500',
-      display: 'flex',
-      alignItems: 'center',
-      gap: '8px'
+      color: "#81E6D9",
+      fontSize: "14px",
+      fontWeight: "500",
+      display: "flex",
+      alignItems: "center",
+      gap: "8px"
     },
     input: {
-      backgroundColor: 'rgba(0, 23, 26, 0.8)',
-      border: '1px solid rgba(79, 209, 197, 0.2)',
-      borderRadius: '8px',
-      padding: '12px',
-      color: '#fff',
-      fontSize: '14px',
-      outline: 'none'
+      backgroundColor: "rgba(0, 23, 26, 0.8)",
+      border: "1px solid rgba(79, 209, 197, 0.2)",
+      borderRadius: "8px",
+      padding: "12px",
+      color: "#fff",
+      fontSize: "14px",
+      outline: "none"
     },
     textarea: {
-      backgroundColor: 'rgba(0, 23, 26, 0.8)',
-      border: '1px solid rgba(79, 209, 197, 0.2)',
-      borderRadius: '8px',
-      padding: '12px',
-      color: '#fff',
-      fontSize: '14px',
-      minHeight: '100px',
-      resize: 'vertical',
-      outline: 'none'
+      backgroundColor: "rgba(0, 23, 26, 0.8)",
+      border: "1px solid rgba(79, 209, 197, 0.2)",
+      borderRadius: "8px",
+      padding: "12px",
+      color: "#fff",
+      fontSize: "14px",
+      minHeight: "100px",
+      resize: "vertical",
+      outline: "none"
     },
     select: {
-      backgroundColor: 'rgba(0, 23, 26, 0.8)',
-      border: '1px solid rgba(79, 209, 197, 0.2)',
-      borderRadius: '8px',
-      padding: '12px',
-      color: '#fff',
-      fontSize: '14px',
-      cursor: 'pointer',
-      outline: 'none'
+      backgroundColor: "rgba(0, 23, 26, 0.8)",
+      border: "1px solid rgba(79, 209, 197, 0.2)",
+      borderRadius: "8px",
+      padding: "12px",
+      color: "#fff",
+      fontSize: "14px",
+      cursor: "pointer",
+      outline: "none"
     },
-    hint: { color: '#A0AEC0', fontSize: '12px', marginTop: '4px' },
-    formActions: { display: 'flex', justifyContent: 'flex-end', marginTop: '20px' },
+    hint: { color: "#A0AEC0", fontSize: "12px", marginTop: "4px" },
+    formActions: { display: "flex", justifyContent: "flex-end", marginTop: "20px" },
     btnSalvar: {
-      backgroundColor: '#4FD1C5',
-      color: '#00171A',
-      border: 'none',
-      padding: '14px 40px',
-      borderRadius: '8px',
-      fontWeight: 'bold',
-      cursor: 'pointer',
-      fontSize: '16px',
-      display: 'flex',
-      alignItems: 'center',
-      gap: '10px'
+      backgroundColor: "#4FD1C5",
+      color: "#00171A",
+      border: "none",
+      padding: "14px 40px",
+      borderRadius: "8px",
+      fontWeight: "bold",
+      cursor: "pointer",
+      fontSize: "16px",
+      display: "flex",
+      alignItems: "center",
+      gap: "10px"
     },
     btnAlterarSenha: {
-      backgroundColor: 'rgba(72, 187, 120, 0.1)',
-      color: '#48BB78',
-      border: '1px solid rgba(72, 187, 120, 0.2)',
-      padding: '14px 40px',
-      borderRadius: '8px',
-      fontWeight: 'bold',
-      cursor: 'pointer',
-      display: 'flex',
-      alignItems: 'center',
-      gap: '10px'
+      backgroundColor: "rgba(72, 187, 120, 0.1)",
+      color: "#48BB78",
+      border: "1px solid rgba(72, 187, 120, 0.2)",
+      padding: "14px 40px",
+      borderRadius: "8px",
+      fontWeight: "bold",
+      cursor: "pointer",
+      display: "flex",
+      alignItems: "center",
+      gap: "10px"
     },
     horarioGrid: {
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-      gap: '15px',
-      marginTop: '15px'
+      display: "grid",
+      gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+      gap: "15px",
+      marginTop: "15px"
     },
     diaHorario: {
-      backgroundColor: 'rgba(0, 0, 0, 0.2)',
-      padding: '15px',
-      borderRadius: '8px'
+      backgroundColor: "rgba(0, 0, 0, 0.2)",
+      padding: "15px",
+      borderRadius: "8px"
     },
     diaLabel: {
-      color: '#81E6D9',
-      fontSize: '14px',
-      fontWeight: '600',
-      marginBottom: '10px',
-      display: 'block'
+      color: "#81E6D9",
+      fontSize: "14px",
+      fontWeight: "600",
+      marginBottom: "10px",
+      display: "block"
     },
-    timeInputs: { display: 'flex', gap: '10px', alignItems: 'center' },
+    timeInputs: { display: "flex", gap: "10px", alignItems: "center" },
     timeInput: {
       flex: 1,
-      backgroundColor: 'rgba(0, 23, 26, 0.8)',
-      border: '1px solid rgba(79, 209, 197, 0.2)',
-      borderRadius: '6px',
-      padding: '8px',
-      color: '#fff',
-      fontSize: '14px',
-      textAlign: 'center'
+      backgroundColor: "rgba(0, 23, 26, 0.8)",
+      border: "1px solid rgba(79, 209, 197, 0.2)",
+      borderRadius: "6px",
+      padding: "8px",
+      color: "#fff",
+      fontSize: "14px",
+      textAlign: "center"
     }
   };
 
@@ -479,7 +512,7 @@ const MeuPerfil = ({ user, isMobile }) => {
 
         {mensagem.texto && (
           <div style={styles.mensagem(mensagem.tipo)}>
-            {mensagem.tipo === 'success' ? <CheckCircle /> : <AlertCircle />}
+            {mensagem.tipo === "success" ? <CheckCircle /> : <AlertCircle />}
             {mensagem.texto}
           </div>
         )}
@@ -501,9 +534,7 @@ const MeuPerfil = ({ user, isMobile }) => {
                   ) : perfil.fotoUrl ? (
                     <img src={perfil.fotoUrl} alt="Logo" style={styles.foto} />
                   ) : (
-                    <div style={styles.fotoPlaceholder}>
-                      {perfil.loginUsuario?.charAt(0)?.toUpperCase() || 'E'}
-                    </div>
+                    <div style={styles.fotoPlaceholder}>{perfil.loginUsuario?.charAt(0)?.toUpperCase() || "E"}</div>
                   )}
                 </div>
 
@@ -511,7 +542,7 @@ const MeuPerfil = ({ user, isMobile }) => {
                   <label htmlFor="fotoUpload" style={styles.btnUpload}>
                     {uploading ? (
                       <>
-                        <div className="spinner" style={{ width: '20px', height: '20px', borderWidth: '2px' }} />
+                        <div className="spinner" style={{ width: "20px", height: "20px", borderWidth: "2px" }} />
                         Enviando...
                       </>
                     ) : (
@@ -527,7 +558,7 @@ const MeuPerfil = ({ user, isMobile }) => {
                     type="file"
                     accept="image/*"
                     onChange={handleImageChange}
-                    style={{ display: 'none' }}
+                    style={{ display: "none" }}
                     disabled={uploading}
                   />
 
@@ -537,40 +568,42 @@ const MeuPerfil = ({ user, isMobile }) => {
             </div>
 
             {/* Horário (SUBCOLEÇÃO) */}
-            <div style={{ ...styles.card, marginTop: '30px' }}>
+            <div style={{ ...styles.card, marginTop: "30px" }}>
               <h2 style={styles.sectionTitle}>🕒 Horário de Funcionamento</h2>
 
               <div style={styles.horarioGrid}>
                 {Object.entries(perfil.horarioFuncionamento).map(([dia, horario]) => (
                   <div key={dia} style={styles.diaHorario}>
-                    <label style={styles.diaLabel}>
-                      {dia.charAt(0).toUpperCase() + dia.slice(1)}
-                    </label>
+                    <label style={styles.diaLabel}>{dia.charAt(0).toUpperCase() + dia.slice(1)}</label>
 
                     <div style={styles.timeInputs}>
                       <input
                         type="time"
                         value={horario.abre}
-                        onChange={(e) => setPerfil(prev => ({
-                          ...prev,
-                          horarioFuncionamento: {
-                            ...prev.horarioFuncionamento,
-                            [dia]: { ...prev.horarioFuncionamento[dia], abre: e.target.value }
-                          }
-                        }))}
+                        onChange={(e) =>
+                          setPerfil((prev) => ({
+                            ...prev,
+                            horarioFuncionamento: {
+                              ...prev.horarioFuncionamento,
+                              [dia]: { ...prev.horarioFuncionamento[dia], abre: e.target.value }
+                            }
+                          }))
+                        }
                         style={styles.timeInput}
                       />
-                      <span style={{ color: '#A0AEC0' }}>às</span>
+                      <span style={{ color: "#A0AEC0" }}>às</span>
                       <input
                         type="time"
                         value={horario.fecha}
-                        onChange={(e) => setPerfil(prev => ({
-                          ...prev,
-                          horarioFuncionamento: {
-                            ...prev.horarioFuncionamento,
-                            [dia]: { ...prev.horarioFuncionamento[dia], fecha: e.target.value }
-                          }
-                        }))}
+                        onChange={(e) =>
+                          setPerfil((prev) => ({
+                            ...prev,
+                            horarioFuncionamento: {
+                              ...prev.horarioFuncionamento,
+                              [dia]: { ...prev.horarioFuncionamento[dia], fecha: e.target.value }
+                            }
+                          }))
+                        }
                         style={styles.timeInput}
                       />
                     </div>
@@ -579,7 +612,7 @@ const MeuPerfil = ({ user, isMobile }) => {
               </div>
 
               <p style={{ ...styles.hint, marginTop: 12 }}>
-                ✅ Este horário é salvo em: <b>estabelecimentos/{'{uid}'}/config/horario</b>
+                ✅ Este horário é salvo em: <b>estabelecimentos/{"{uid}"}/config/horario</b>
               </p>
             </div>
           </div>
@@ -602,10 +635,29 @@ const MeuPerfil = ({ user, isMobile }) => {
                     <input
                       style={styles.input}
                       value={perfil.loginUsuario}
-                      onChange={(e) => setPerfil(prev => ({ ...prev, loginUsuario: e.target.value }))}
+                      onChange={(e) => setPerfil((prev) => ({ ...prev, loginUsuario: e.target.value }))}
                       placeholder="Ex: Restaurante Sabor Caseiro"
                       required
                     />
+                  </div>
+
+                  {/* ✅ Tempo de atendimento */}
+                  <div style={styles.inputGroup}>
+                    <label style={styles.label}>
+                      <Clock size={16} />
+                      Tempo de atendimento (min) *
+                    </label>
+                    <input
+                      style={styles.input}
+                      type="number"
+                      min={0}
+                      max={999}
+                      value={perfil.tempoEntrega}
+                      onChange={(e) => setPerfil((prev) => ({ ...prev, tempoEntrega: e.target.value }))}
+                      placeholder="Ex: 45"
+                      required
+                    />
+                    <div style={styles.hint}>Este tempo aparece no app do cliente (ex: “45 min”)</div>
                   </div>
 
                   <div style={styles.inputGroup}>
@@ -617,7 +669,7 @@ const MeuPerfil = ({ user, isMobile }) => {
                       style={styles.input}
                       placeholder="00.000.000/0000-00"
                       value={perfil.cnpj}
-                      onChange={(e) => setPerfil(prev => ({ ...prev, cnpj: maskCNPJ(e.target.value) }))}
+                      onChange={(e) => setPerfil((prev) => ({ ...prev, cnpj: maskCNPJ(e.target.value) }))}
                     />
                     <div style={styles.hint}>Opcional</div>
                   </div>
@@ -631,7 +683,7 @@ const MeuPerfil = ({ user, isMobile }) => {
                       style={styles.input}
                       placeholder="(11) 99999-9999"
                       value={perfil.whatsappFormatado}
-                      onChange={(e) => setPerfil(prev => ({ ...prev, whatsappFormatado: maskPhone(e.target.value) }))}
+                      onChange={(e) => setPerfil((prev) => ({ ...prev, whatsappFormatado: maskPhone(e.target.value) }))}
                       required
                     />
                     <div style={styles.hint}>Usado para contato com clientes</div>
@@ -652,16 +704,14 @@ const MeuPerfil = ({ user, isMobile }) => {
                   <textarea
                     style={styles.textarea}
                     value={perfil.descricao}
-                    onChange={(e) => setPerfil(prev => ({ ...prev, descricao: e.target.value }))}
+                    onChange={(e) => setPerfil((prev) => ({ ...prev, descricao: e.target.value }))}
                     placeholder="Descreva seu estabelecimento, especialidades, etc."
                     maxLength={500}
                   />
-                  <div style={{ ...styles.hint, textAlign: 'right' }}>
-                    {(perfil.descricao || '').length}/500 caracteres
-                  </div>
+                  <div style={{ ...styles.hint, textAlign: "right" }}>{(perfil.descricao || "").length}/500 caracteres</div>
                 </div>
 
-                <h3 style={{ ...styles.sectionTitle, fontSize: '16px', marginTop: '30px' }}>
+                <h3 style={{ ...styles.sectionTitle, fontSize: "16px", marginTop: "30px" }}>
                   <MapPin size={18} />
                   Endereço
                 </h3>
@@ -673,10 +723,7 @@ const MeuPerfil = ({ user, isMobile }) => {
                       style={styles.input}
                       placeholder="00.000-000"
                       value={perfil.endereco.cep}
-                      onChange={(e) => setPerfil(prev => ({
-                        ...prev,
-                        endereco: { ...prev.endereco, cep: maskCEP(e.target.value) }
-                      }))}
+                      onChange={(e) => setPerfil((prev) => ({ ...prev, endereco: { ...prev.endereco, cep: maskCEP(e.target.value) } }))}
                     />
                   </div>
 
@@ -685,10 +732,7 @@ const MeuPerfil = ({ user, isMobile }) => {
                     <input
                       style={styles.input}
                       value={perfil.endereco.rua}
-                      onChange={(e) => setPerfil(prev => ({
-                        ...prev,
-                        endereco: { ...prev.endereco, rua: e.target.value }
-                      }))}
+                      onChange={(e) => setPerfil((prev) => ({ ...prev, endereco: { ...prev.endereco, rua: e.target.value } }))}
                       placeholder="Nome da rua"
                     />
                   </div>
@@ -698,10 +742,7 @@ const MeuPerfil = ({ user, isMobile }) => {
                     <input
                       style={styles.input}
                       value={perfil.endereco.numero}
-                      onChange={(e) => setPerfil(prev => ({
-                        ...prev,
-                        endereco: { ...prev.endereco, numero: e.target.value }
-                      }))}
+                      onChange={(e) => setPerfil((prev) => ({ ...prev, endereco: { ...prev.endereco, numero: e.target.value } }))}
                       placeholder="123"
                     />
                   </div>
@@ -711,10 +752,7 @@ const MeuPerfil = ({ user, isMobile }) => {
                     <input
                       style={styles.input}
                       value={perfil.endereco.bairro}
-                      onChange={(e) => setPerfil(prev => ({
-                        ...prev,
-                        endereco: { ...prev.endereco, bairro: e.target.value }
-                      }))}
+                      onChange={(e) => setPerfil((prev) => ({ ...prev, endereco: { ...prev.endereco, bairro: e.target.value } }))}
                       placeholder="Centro"
                     />
                   </div>
@@ -724,10 +762,7 @@ const MeuPerfil = ({ user, isMobile }) => {
                     <input
                       style={styles.input}
                       value={perfil.endereco.cidade}
-                      onChange={(e) => setPerfil(prev => ({
-                        ...prev,
-                        endereco: { ...prev.endereco, cidade: e.target.value }
-                      }))}
+                      onChange={(e) => setPerfil((prev) => ({ ...prev, endereco: { ...prev.endereco, cidade: e.target.value } }))}
                       placeholder="São Paulo"
                     />
                   </div>
@@ -737,14 +772,13 @@ const MeuPerfil = ({ user, isMobile }) => {
                     <select
                       style={styles.select}
                       value={perfil.endereco.estado}
-                      onChange={(e) => setPerfil(prev => ({
-                        ...prev,
-                        endereco: { ...prev.endereco, estado: e.target.value }
-                      }))}
+                      onChange={(e) => setPerfil((prev) => ({ ...prev, endereco: { ...prev.endereco, estado: e.target.value } }))}
                     >
                       <option value="">Selecione...</option>
-                      {estados.map(estado => (
-                        <option key={estado} value={estado}>{estado}</option>
+                      {estados.map((estado) => (
+                        <option key={estado} value={estado}>
+                          {estado}
+                        </option>
                       ))}
                     </select>
                   </div>
@@ -754,7 +788,7 @@ const MeuPerfil = ({ user, isMobile }) => {
                   <button type="submit" style={styles.btnSalvar} disabled={loading || uploading}>
                     {loading ? (
                       <>
-                        <div className="spinner" style={{ width: '20px', height: '20px', borderWidth: '2px' }} />
+                        <div className="spinner" style={{ width: "20px", height: "20px", borderWidth: "2px" }} />
                         Salvando...
                       </>
                     ) : (
@@ -769,7 +803,7 @@ const MeuPerfil = ({ user, isMobile }) => {
             </div>
 
             {/* Alterar Senha */}
-            <div style={{ ...styles.card, marginTop: '30px' }}>
+            <div style={{ ...styles.card, marginTop: "30px" }}>
               <h2 style={styles.sectionTitle}>
                 <Lock size={20} />
                 Alterar Senha
@@ -817,7 +851,7 @@ const MeuPerfil = ({ user, isMobile }) => {
                   <button type="submit" style={styles.btnAlterarSenha} disabled={loading}>
                     {loading ? (
                       <>
-                        <div className="spinner" style={{ width: '20px', height: '20px', borderWidth: '2px' }} />
+                        <div className="spinner" style={{ width: "20px", height: "20px", borderWidth: "2px" }} />
                         Alterando...
                       </>
                     ) : (
@@ -830,9 +864,18 @@ const MeuPerfil = ({ user, isMobile }) => {
                 </div>
               </form>
             </div>
-
           </div>
         </div>
+
+        <style>{`
+          .spinner{
+            border: 2px solid rgba(255,255,255,0.2);
+            border-top-color: rgba(255,255,255,0.9);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+          }
+          @keyframes spin { to { transform: rotate(360deg); } }
+        `}</style>
       </div>
     </Layout>
   );

@@ -16,7 +16,7 @@ export const EstabelecimentoCard = ({ estabelecimento, onClick, isMobile }) => {
       position: "relative",
     },
     cardImage: {
-      height: isMobile ? "160px" : "135px", // ✅ menor no desktop
+      height: isMobile ? "160px" : "135px",
       position: "relative",
       overflow: "hidden",
     },
@@ -80,11 +80,11 @@ export const EstabelecimentoCard = ({ estabelecimento, onClick, isMobile }) => {
       alignItems: "center",
     },
     cardBody: {
-      padding: isMobile ? "16px" : "14px", // ✅ menor no desktop
+      padding: isMobile ? "16px" : "14px",
     },
     estNome: {
       margin: 0,
-      fontSize: isMobile ? "16px" : "15px", // ✅ menor no desktop
+      fontSize: isMobile ? "16px" : "15px",
       fontWeight: "900",
       color: "#0F3460",
       display: "flex",
@@ -133,6 +133,10 @@ export const EstabelecimentoCard = ({ estabelecimento, onClick, isMobile }) => {
   const rating = useMemo(() => (Math.random() * 1 + 4).toFixed(1), []);
   const nomeLoja = String(estabelecimento?.cliente || "Loja");
   const primeiraLetra = nomeLoja?.[0] ? nomeLoja[0] : "L";
+
+  // ✅ pega tempo do banco com segurança
+  const tempoMinRaw = Number(estabelecimento?.tempoEntrega ?? 30);
+  const tempoMin = Number.isFinite(tempoMinRaw) ? Math.max(0, Math.min(999, tempoMinRaw)) : 30;
 
   return (
     <div style={styles.card} onClick={onClick}>
@@ -191,6 +195,7 @@ export const EstabelecimentoCard = ({ estabelecimento, onClick, isMobile }) => {
           <div style={{ fontSize: "10px", fontWeight: "600" }}>
             {estabelecimento?.textoHorario || "Horário não definido"}
           </div>
+
           <div
             style={{
               background: "rgba(255,255,255,0.2)",
@@ -202,7 +207,7 @@ export const EstabelecimentoCard = ({ estabelecimento, onClick, isMobile }) => {
               whiteSpace: "nowrap",
             }}
           >
-            🚀 {estabelecimento?.tempoEntrega ?? 30} min
+            🚀 {tempoMin} min
           </div>
         </div>
       </div>

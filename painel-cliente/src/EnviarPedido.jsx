@@ -1,4 +1,6 @@
-// EnviarPedido.jsx (ATUALIZADO) — cole e substitua o arquivo todo
+// EnviarPedido.jsx (ATUALIZADO - TROCO CORRETO NO FIRESTORE)
+// cole e substitua o arquivo todo
+
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   ArrowLeft, CheckCircle, CreditCard, DollarSign, MapPin, Loader2,
@@ -252,146 +254,6 @@ const EnviarPedido = ({ estabelecimento, carrinho, dadosCliente, onVoltar, onSuc
     setFreteSelecionado(b ? toNumber(b.valor) : null);
   };
 
-  const handleEnviarPedido = async () => {
-    if (Array.isArray(bairrosEntrega) && bairrosEntrega.length > 0 && !bairroSelecionado) {
-      alert('Selecione seu bairro para calcular o frete.');
-      return;
-    }
-
-    setEnviando(true);
-    const numero = Math.floor(100000 + Math.random() * 900000);
-
-    try {
-      const itensFormatados = (Array.isArray(carrinho) ? carrinho : []).map(item => {
-        const base = toNumber(item?.precoBaseUnitario ?? item?.preco);
-        const adicionaisTotal = calcAdicionais(item);
-        const unit = base + adicionaisTotal;
-        const qtd = toNumber(item?.quantidade) || 1;
-
-        return {
-          id: item.id || item.idUnico,
-          nome: item.nome,
-          quantidade: qtd,
-          precoBaseUnitario: base,
-          adicionaisTotal,
-          precoUnitarioFinal: unit,
-          precoTotal: unit * qtd,
-          escolhas: Array.isArray(item.escolhas) ? item.escolhas : [],
-          adicionaisTexto: formatAdicionaisTexto(item),
-          foto: item.foto || null
-        };
-      });
-
-      const subtotal = calcularSubtotal();
-      const frete = taxaEntregaAtual;
-      const total = subtotal + frete;
-
-      const bairroObj = (bairrosEntrega || []).find(b => String(b?.chave || '') === String(bairroSelecionado));
-      const bairroNome = bairroObj?.nome || dadosCliente?.bairro || '';
-
-      const dadosDoPedido = {
-        numeroPedido: numero,
-
-        estabelecimentoId: estabId,
-        estabelecimentoNome: estabNome,
-        restauranteId: estabId,
-        restauranteNome: estabNome,
-
-        itens: itensFormatados,
-
-        cliente: {
-          nomeCompleto: dadosCliente.nomeCompleto,
-          telefone: String(dadosCliente.telefone).replace(/\D/g, ''),
-          rua: dadosCliente.rua,
-          numero: dadosCliente.numero,
-          bairro: dadosCliente.bairro,
-          cidade: dadosCliente.cidade || 'Araraquara',
-          complemento: dadosCliente.complemento || '',
-          referencia: dadosCliente.referencia || '',
-          cep: dadosCliente.cep || ''
-        },
-
-        entrega: {
-          modo: (bairrosEntrega?.length ? 'bairro' : 'fixo'),
-          bairroSelecionado: bairroSelecionado ? { chave: bairroSelecionado, nome: bairroNome } : null,
-          frete: frete
-        },
-
-        pagamento: {
-          metodo: metodoSelecionadoInfo?.id || metodoPagamento,
-          metodoLabel: metodoSelecionadoInfo?.nome || metodoPagamento,
-          grupo: metodoSelecionadoInfo?.grupoKey || 'pagamento',
-          grupoLabel: metodoSelecionadoInfo?.grupoTitulo || 'Pagamento',
-          comissao: toNumber(metodoSelecionadoInfo?.comissao),
-          troco: isDinheiro ? (troco || "") : "",
-          subtotal: subtotal,
-          taxaEntrega: frete,
-          total: total
-        },
-
-        observacoes: observacoes || "",
-        status: 'pendente',
-        dataCriacao: serverTimestamp(),
-        tempoEstimado: estabelecimento?.tempoEntrega || 30,
-        taxaEntrega: frete
-      };
-
-      const docRef = await addDoc(collection(db, "Pedidos"), dadosDoPedido);
-      setIdDocPedido(docRef.id);
-      setPedidoEnviado(true);
-      setEtapa('sucesso');
-
-      if (typeof onSucesso === 'function') onSucesso();
-
-      // WhatsApp (mantive)
-      const linhasItens = itensFormatados.map(item => {
-        const adicionaisTxt = item?.adicionaisTexto ? `\n   + ${item.adicionaisTexto}` : '';
-        return `• ${item.quantidade}x ${item.nome} - ${formatBRL(item.precoTotal)}${adicionaisTxt}`;
-      }).join('\n');
-
-      const msg =
-`*🎉 NOVO PEDIDO #${numero}*
-
-*Cliente:* ${dadosCliente.nomeCompleto}
-*Telefone:* ${dadosCliente.telefone}
-
-*📍 ENDEREÇO:*
-${dadosCliente.rua}, ${dadosCliente.numero}
-${dadosCliente.bairro}${bairroNome ? ` (Frete por bairro: ${bairroNome})` : ''}, ${dadosCliente.cidade}
-${dadosCliente.complemento ? `Complemento: ${dadosCliente.complemento}` : ''}
-${dadosCliente.referencia ? `Referência: ${dadosCliente.referencia}` : ''}
-
-*💳 PAGAMENTO:*
-${metodoSelecionadoInfo?.icone || '💳'} ${metodoSelecionadoInfo?.nome || metodoPagamento} (${metodoSelecionadoInfo?.grupoTitulo || 'Pagamento'})
-${isDinheiro && troco ? `Troco para: ${formatBRL(troco)}` : ''}
-
-*🧾 RESUMO:*
-Subtotal (lanches): ${formatBRL(subtotal)}
-Frete: ${formatBRL(frete)}
-*TOTAL:* ${formatBRL(total)}
-
-*📦 ITENS:*
-${linhasItens}
-
-${observacoes ? `\n*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
-
-      const tel = normalizeWhatsApp(estabelecimento?.whatsapp);
-      if (tel) {
-        setTimeout(() => {
-          window.open(
-            `https://wa.me/${tel}?text=${encodeURIComponent(msg)}`,
-            '_blank'
-          );
-        }, 1200);
-      }
-
-    } catch (error) {
-      console.error("Erro ao salvar:", error);
-      alert('Erro ao processar pedido. Por favor, tente novamente.');
-      setEnviando(false);
-    }
-  };
-
   const styles = {
     container: {
       backgroundColor: '#F8FAFC',
@@ -530,6 +392,19 @@ ${observacoes ? `\n*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
       alignItems: 'flex-start',
       marginTop: '12px'
     },
+    alertaErro: {
+      padding: '14px',
+      background: '#FEE2E2',
+      border: '1px solid #EF4444',
+      borderRadius: '14px',
+      color: '#991B1B',
+      fontSize: '14px',
+      display: 'flex',
+      gap: '10px',
+      alignItems: 'flex-start',
+      marginTop: '12px',
+      fontWeight: 800
+    },
     grupoBox: {
       border: '1px solid #E2E8F0',
       borderRadius: '16px',
@@ -593,6 +468,185 @@ ${observacoes ? `\n*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
     }
   };
 
+  // ===== Totais atuais (para validação do troco e exibição) =====
+  const subtotal = calcularSubtotal();
+  const taxa = taxaEntregaAtual;
+  const total = calcularTotal();
+
+  // ✅ Troco (normalizado)
+  const trocoParaNumber = useMemo(() => {
+    if (!isDinheiro) return 0;
+    const n = toNumber(troco);
+    return n > 0 ? n : 0;
+  }, [troco, isDinheiro]);
+
+  const precisaTroco = useMemo(() => {
+    return isDinheiro && trocoParaNumber > 0;
+  }, [isDinheiro, trocoParaNumber]);
+
+  const trocoEstimado = useMemo(() => {
+    if (!precisaTroco) return 0;
+    return trocoParaNumber - total;
+  }, [precisaTroco, trocoParaNumber, total]);
+
+  const trocoInvalido = useMemo(() => {
+    // se informou troco, não pode ser menor que o total
+    return precisaTroco && trocoParaNumber < total;
+  }, [precisaTroco, trocoParaNumber, total]);
+
+  const handleEnviarPedido = async () => {
+    if (Array.isArray(bairrosEntrega) && bairrosEntrega.length > 0 && !bairroSelecionado) {
+      alert('Selecione seu bairro para calcular o frete.');
+      return;
+    }
+
+    if (trocoInvalido) {
+      alert('O valor de "troco para" não pode ser menor que o total do pedido.');
+      return;
+    }
+
+    setEnviando(true);
+    const numero = Math.floor(100000 + Math.random() * 900000);
+
+    try {
+      const itensFormatados = (Array.isArray(carrinho) ? carrinho : []).map(item => {
+        const base = toNumber(item?.precoBaseUnitario ?? item?.preco);
+        const adicionaisTotal = calcAdicionais(item);
+        const unit = base + adicionaisTotal;
+        const qtd = toNumber(item?.quantidade) || 1;
+
+        return {
+          id: item.id || item.idUnico,
+          nome: item.nome,
+          quantidade: qtd,
+          precoBaseUnitario: base,
+          adicionaisTotal,
+          precoUnitarioFinal: unit,
+          precoTotal: unit * qtd,
+          escolhas: Array.isArray(item.escolhas) ? item.escolhas : [],
+          adicionaisTexto: formatAdicionaisTexto(item),
+          foto: item.foto || null
+        };
+      });
+
+      const frete = taxa;
+      const totalFinal = subtotal + frete;
+
+      const bairroObj = (bairrosEntrega || []).find(b => String(b?.chave || '') === String(bairroSelecionado));
+      const bairroNome = bairroObj?.nome || dadosCliente?.bairro || '';
+
+      const dadosDoPedido = {
+        numeroPedido: numero,
+
+        estabelecimentoId: estabId,
+        estabelecimentoNome: estabNome,
+        restauranteId: estabId,
+        restauranteNome: estabNome,
+
+        itens: itensFormatados,
+
+        cliente: {
+          nomeCompleto: dadosCliente.nomeCompleto,
+          telefone: String(dadosCliente.telefone).replace(/\D/g, ''),
+          rua: dadosCliente.rua,
+          numero: dadosCliente.numero,
+          bairro: dadosCliente.bairro,
+          cidade: dadosCliente.cidade || 'Araraquara',
+          complemento: dadosCliente.complemento || '',
+          referencia: dadosCliente.referencia || '',
+          cep: dadosCliente.cep || ''
+        },
+
+        entrega: {
+          modo: (bairrosEntrega?.length ? 'bairro' : 'fixo'),
+          bairroSelecionado: bairroSelecionado ? { chave: bairroSelecionado, nome: bairroNome } : null,
+          frete: frete
+        },
+
+        pagamento: {
+          metodo: metodoSelecionadoInfo?.id || metodoPagamento,
+          metodoLabel: metodoSelecionadoInfo?.nome || metodoPagamento,
+          grupo: metodoSelecionadoInfo?.grupoKey || 'pagamento',
+          grupoLabel: metodoSelecionadoInfo?.grupoTitulo || 'Pagamento',
+          comissao: toNumber(metodoSelecionadoInfo?.comissao),
+
+          // ✅ TROCO PADRONIZADO
+          precisaTroco: !!precisaTroco,
+          trocoPara: precisaTroco ? Number(trocoParaNumber.toFixed(2)) : 0,
+          trocoEstimado: precisaTroco ? Number((trocoParaNumber - totalFinal).toFixed(2)) : 0,
+
+          // (compatibilidade com o que você já tinha)
+          troco: precisaTroco ? String(trocoParaNumber) : "",
+
+          subtotal: Number(subtotal.toFixed(2)),
+          taxaEntrega: Number(frete.toFixed(2)),
+          total: Number(totalFinal.toFixed(2))
+        },
+
+        observacoes: observacoes || "",
+        status: 'pendente',
+        dataCriacao: serverTimestamp(),
+        tempoEstimado: estabelecimento?.tempoEntrega || 30,
+        taxaEntrega: frete
+      };
+
+      const docRef = await addDoc(collection(db, "Pedidos"), dadosDoPedido);
+      setIdDocPedido(docRef.id);
+      setPedidoEnviado(true);
+      setEtapa('sucesso');
+
+      if (typeof onSucesso === 'function') onSucesso();
+
+      // WhatsApp
+      const linhasItens = itensFormatados.map(item => {
+        const adicionaisTxt = item?.adicionaisTexto ? `\n   + ${item.adicionaisTexto}` : '';
+        return `• ${item.quantidade}x ${item.nome} - ${formatBRL(item.precoTotal)}${adicionaisTxt}`;
+      }).join('\n');
+
+      const msg =
+`*🎉 NOVO PEDIDO #${numero}*
+
+*Cliente:* ${dadosCliente.nomeCompleto}
+*Telefone:* ${dadosCliente.telefone}
+
+*📍 ENDEREÇO:*
+${dadosCliente.rua}, ${dadosCliente.numero}
+${dadosCliente.bairro}${bairroNome ? ` (Frete por bairro: ${bairroNome})` : ''}, ${dadosCliente.cidade}
+${dadosCliente.complemento ? `Complemento: ${dadosCliente.complemento}` : ''}
+${dadosCliente.referencia ? `Referência: ${dadosCliente.referencia}` : ''}
+
+*💳 PAGAMENTO:*
+${metodoSelecionadoInfo?.icone || '💳'} ${metodoSelecionadoInfo?.nome || metodoPagamento} (${metodoSelecionadoInfo?.grupoTitulo || 'Pagamento'})
+${precisaTroco ? `Troco para: ${formatBRL(trocoParaNumber)} (Troco: ${formatBRL(trocoParaNumber - totalFinal)})` : ''}
+
+*🧾 RESUMO:*
+Subtotal (lanches): ${formatBRL(subtotal)}
+Frete: ${formatBRL(frete)}
+*TOTAL:* ${formatBRL(totalFinal)}
+
+*📦 ITENS:*
+${linhasItens}
+
+${observacoes ? `\n*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
+
+      const tel = normalizeWhatsApp(estabelecimento?.whatsapp);
+      if (tel) {
+        setTimeout(() => {
+          window.open(
+            `https://wa.me/${tel}?text=${encodeURIComponent(msg)}`,
+            '_blank'
+          );
+        }, 1200);
+      }
+
+      setEnviando(false);
+    } catch (error) {
+      console.error("Erro ao salvar:", error);
+      alert('Erro ao processar pedido. Por favor, tente novamente.');
+      setEnviando(false);
+    }
+  };
+
   // tela de sucesso (igual)
   if (pedidoEnviado && etapa === 'sucesso') {
     const status = pedidoRealTime?.status || 'pendente';
@@ -642,6 +696,14 @@ ${observacoes ? `\n*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
               <div style={{ fontSize: '13px', color: '#64748B', lineHeight: '1.6' }}>
                 <div><b>Restaurante:</b> {pedidoRealTime?.restauranteNome || pedidoRealTime?.estabelecimentoNome || '-'}</div>
                 <div><b>Pagamento:</b> {pedidoRealTime?.pagamento?.metodoLabel || pedidoRealTime?.pagamento?.metodo || '-'}</div>
+
+                {/* ✅ TROCO NA TELA DE ACOMPANHAR */}
+                {(pedidoRealTime?.pagamento?.metodo === 'dinheiro' && (pedidoRealTime?.pagamento?.trocoPara || pedidoRealTime?.pagamento?.troco)) && (
+                  <div>
+                    <b>Troco para:</b> {formatBRL(pedidoRealTime?.pagamento?.trocoPara || pedidoRealTime?.pagamento?.troco)}
+                  </div>
+                )}
+
                 <div><b>Frete:</b> {formatBRL(pedidoRealTime?.pagamento?.taxaEntrega)}</div>
                 <div><b>Total:</b> {formatBRL(pedidoRealTime?.pagamento?.total ?? 0)}</div>
                 <div><b>Tempo estimado:</b> {pedidoRealTime?.tempoEstimado || 30} minutos</div>
@@ -675,10 +737,6 @@ ${observacoes ? `\n*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
       </div>
     );
   }
-
-  const subtotal = calcularSubtotal();
-  const taxa = taxaEntregaAtual;
-  const total = calcularTotal();
 
   const bairroNomeSelecionado = useMemo(() => {
     const b = (bairrosEntrega || []).find(x => String(x?.chave || '') === String(bairroSelecionado));
@@ -801,24 +859,38 @@ ${observacoes ? `\n*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
               </div>
               <input
                 type="number"
-                placeholder="Troco para quanto? Ex: 50,00"
+                placeholder="Troco para quanto? Ex: 100,00"
                 style={styles.input}
                 value={troco}
                 onChange={(e) => setTroco(e.target.value)}
                 step="0.01"
                 min="0"
               />
-              {troco && (
-                <div style={styles.alerta}>
-                  <AlertCircle size={18} />
-                  <div>Troco estimado: <b>{formatBRL(toNumber(troco) - total)}</b></div>
-                </div>
+
+              {precisaTroco && (
+                <>
+                  {trocoInvalido ? (
+                    <div style={styles.alertaErro}>
+                      <AlertCircle size={18} />
+                      <div>
+                        O valor do troco ({formatBRL(trocoParaNumber)}) não pode ser menor que o total ({formatBRL(total)}).
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={styles.alerta}>
+                      <AlertCircle size={18} />
+                      <div>
+                        Troco estimado: <b>{formatBRL(trocoEstimado)}</b> (Troco para: <b>{formatBRL(trocoParaNumber)}</b>)
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}
         </div>
 
-        {/* ✅ RESUMO DO PEDIDO (DETALHADO COMO VOCÊ QUER) */}
+        {/* ✅ RESUMO DO PEDIDO */}
         <div style={styles.section}>
           <div style={styles.sectionTitle}>
             <Package size={20} color="#10B981" /> Resumo do Pedido
@@ -828,7 +900,7 @@ ${observacoes ? `\n*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
             const key = item?.idUnico || item?.id || `${item?.nome || 'item'}_${idx}`;
             const qtd = toNumber(item?.quantidade) || 1;
 
-            const baseUnit = toNumber(item?.precoBaseUnitario ?? item?.preco); // ✅ preço normal
+            const baseUnit = toNumber(item?.precoBaseUnitario ?? item?.preco);
             const baseTotal = baseUnit * qtd;
 
             const adicionaisLinhas = getAdicionaisLinhas(item, qtd);
@@ -838,7 +910,6 @@ ${observacoes ? `\n*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
 
             return (
               <div key={key} style={{ padding: '16px 0', borderBottom: '1px dashed #E2E8F0' }}>
-                {/* Linha principal: 1x Nome — base */}
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '16px', alignItems: 'flex-start' }}>
                   <div style={{ flex: 1 }}>
                     <div style={{ fontWeight: '900', color: '#0F3460', fontSize: '16px' }}>
@@ -855,7 +926,6 @@ ${observacoes ? `\n*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
                   </div>
                 </div>
 
-                {/* Adicionais */}
                 {adicionaisLinhas.length > 0 && (
                   <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #F1F5F9' }}>
                     <div style={{ fontSize: '12px', fontWeight: '900', color: '#94A3B8', marginBottom: '8px', textTransform: 'uppercase' }}>
@@ -882,7 +952,6 @@ ${observacoes ? `\n*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
                   </div>
                 )}
 
-                {/* Se não tiver adicionais, mostra o subtotal simples do item */}
                 {adicionaisLinhas.length === 0 && (
                   <div style={{ ...styles.adicionalLinha, marginTop: '10px' }}>
                     <span style={{ fontWeight: '800', color: '#4A5568' }}>Subtotal do item</span>
@@ -893,7 +962,6 @@ ${observacoes ? `\n*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
             );
           })}
 
-          {/* Totais */}
           <div style={{ marginTop: '20px', paddingTop: '20px', borderTop: '2px solid #E2E8F0' }}>
             <div style={styles.resumoLinha}>
               <span>Subtotal (lanches)</span>
@@ -911,9 +979,14 @@ ${observacoes ? `\n*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
               <span>TOTAL</span>
               <b style={{ color: '#10B981', fontSize: '24px' }}>{formatBRL(total)}</b>
             </div>
+
+            {precisaTroco && !trocoInvalido && (
+              <div style={{ marginTop: 12, fontSize: 14, color: '#0F3460', fontWeight: 800 }}>
+                Troco para: <b>{formatBRL(trocoParaNumber)}</b> • Troco estimado: <b>{formatBRL(trocoEstimado)}</b>
+              </div>
+            )}
           </div>
 
-          {/* Observações */}
           <div style={{ marginTop: '24px' }}>
             <div style={{ fontSize: '15px', fontWeight: '900', color: '#0F3460', marginBottom: '12px' }}>
               Observações para o restaurante
@@ -932,7 +1005,8 @@ ${observacoes ? `\n*📝 OBSERVAÇÕES:*\n${observacoes}` : ''}`;
             disabled={
               enviando ||
               (Array.isArray(carrinho) ? carrinho.length === 0 : true) ||
-              (precisaSelecionarBairro && !bairroSelecionado)
+              (precisaSelecionarBairro && !bairroSelecionado) ||
+              trocoInvalido
             }
             type="button"
           >

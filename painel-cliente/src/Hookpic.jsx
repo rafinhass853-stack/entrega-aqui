@@ -1,14 +1,7 @@
 // Hookpic.jsx
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { db } from "./firebase";
-import {
-  collection,
-  onSnapshot,
-  query,
-  doc,
-  getDoc,
-  where,
-} from "firebase/firestore";
+import { collection, onSnapshot, query, doc, getDoc, where } from "firebase/firestore";
 
 // Hook para detectar tamanho da tela
 export const useMediaQuery = (queryStr) => {
@@ -115,10 +108,7 @@ export const useHorarioHelpers = () => {
   };
 };
 
-export const useEstabelecimentos = ({
-  montarTextoHorarioHoje,
-  verificarAbertoAgora,
-}) => {
+export const useEstabelecimentos = ({ montarTextoHorarioHoje, verificarAbertoAgora }) => {
   const [estabelecimentos, setEstabelecimentos] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -136,7 +126,12 @@ export const useEstabelecimentos = ({
           let textoHorario = "Horário não definido";
           let abertoAgora = false;
 
-          let tempoEntregaMin = 30;
+          // ✅ tempo agora vem do Firestore (estabelecimentos/{id}.tempoEntrega)
+          const tempoEntregaMinRaw = Number(data?.tempoEntrega ?? data?.tempoAtendimento ?? 30);
+          const tempoEntregaMin = Number.isFinite(tempoEntregaMinRaw)
+            ? Math.max(0, Math.min(999, tempoEntregaMinRaw))
+            : 30;
+
           let taxaEntregaCalculada = data.taxaEntrega ?? 0;
 
           // buscar horário na subcoleção: estabelecimentos/{id}/config/horario
@@ -149,11 +144,6 @@ export const useEstabelecimentos = ({
               horarioFuncionamento = hData?.horarioFuncionamento || null;
               textoHorario = montarTextoHorarioHoje(horarioFuncionamento);
               abertoAgora = verificarAbertoAgora(horarioFuncionamento);
-
-              const hora = new Date().getHours();
-              if (hora >= 18 && hora <= 22) tempoEntregaMin = 45;
-              else if (hora >= 11 && hora <= 14) tempoEntregaMin = 40;
-              else tempoEntregaMin = 30;
             } else {
               abertoAgora = false;
               textoHorario = "Horário não definido";
@@ -167,25 +157,17 @@ export const useEstabelecimentos = ({
           // taxa por faixas (se taxaEntregaCalculada = 0)
           try {
             if (taxaEntregaCalculada === 0) {
-              const entregaDocRef = doc(
-                db,
-                "estabelecimentos",
-                id,
-                "configuracao",
-                "entrega"
-              );
+              const entregaDocRef = doc(db, "estabelecimentos", id, "configuracao", "entrega");
               const entregaSnap = await getDoc(entregaDocRef);
+
               if (entregaSnap.exists()) {
                 const entregaConfig = entregaSnap.data();
-                const faixas = Array.isArray(entregaConfig?.faixas)
-                  ? entregaConfig.faixas
-                  : [];
+                const faixas = Array.isArray(entregaConfig?.faixas) ? entregaConfig.faixas : [];
                 const faixaOrdenada = [...faixas].sort(
                   (a, b) => Number(a.ate || 0) - Number(b.ate || 0)
                 );
-                taxaEntregaCalculada = Number(
-                  faixaOrdenada?.[0]?.valor ?? taxaEntregaCalculada ?? 0
-                );
+
+                taxaEntregaCalculada = Number(faixaOrdenada?.[0]?.valor ?? taxaEntregaCalculada ?? 0);
               }
             }
           } catch (e) {
@@ -206,7 +188,7 @@ export const useEstabelecimentos = ({
               rua: enderecoData.rua || "",
             },
             taxaEntrega: Number(taxaEntregaCalculada) || 0,
-            tempoEntrega: tempoEntregaMin,
+            tempoEntrega: tempoEntregaMin, // ✅ agora é o valor do estabelecimento
             horarioFuncionamento,
             textoHorario,
             aberto: abertoAgora,
@@ -238,17 +220,12 @@ export const useHistoricoPedidos = (dadosCliente) => {
       return;
     }
     const telBusca = String(dadosCliente.telefone);
-    const q = query(
-      collection(db, "Pedidos"),
-      where("cliente.telefone", "==", telBusca)
-    );
+    const q = query(collection(db, "Pedidos"), where("cliente.telefone", "==", telBusca));
 
     return onSnapshot(q, (snapshot) => {
       const lista = snapshot.docs.map((d) => ({ id: d.id, ...d.data() }));
       setHistoricoPedidos(
-        lista.sort(
-          (a, b) => (b.dataCriacao?.seconds || 0) - (a.dataCriacao?.seconds || 0)
-        )
+        lista.sort((a, b) => (b.dataCriacao?.seconds || 0) - (a.dataCriacao?.seconds || 0))
       );
     });
   }, [dadosCliente]);
