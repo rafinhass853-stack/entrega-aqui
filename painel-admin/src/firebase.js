@@ -1,6 +1,7 @@
 import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
+import { getFunctions } from "firebase/functions";
 
 const firebaseConfig = {
   apiKey: "AIzaSyB4JpvdR9d0JuBv3cc1DoLeCkftl1Us57k",
@@ -12,9 +13,14 @@ const firebaseConfig = {
   measurementId: "G-8J5Q01B0E4"
 };
 
-// Inicializa o Firebase
+// 🔥 Inicializa o Firebase
 const app = initializeApp(firebaseConfig);
 
-// Exporta os serviços para usar nos outros arquivos
+// 🔐 Auth
 export const auth = getAuth(app);
+
+// 🗄 Firestore
 export const db = getFirestore(app);
+
+// ⚙️ Cloud Functions (ESSENCIAL para painel admin)
+export const functions = getFunctions(app);

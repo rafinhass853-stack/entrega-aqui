@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import Lojas from './Lojas'; // Certifique-se de que o arquivo Lojas.jsx está na mesma pasta
+import Dashboard from "./Dashboard";
+
 
 const Menu = ({ onLogout }) => {
   const [activeSection, setActiveSection] = useState('dashboard');
@@ -137,14 +139,8 @@ const Menu = ({ onLogout }) => {
 
         <div style={styles.contentCard}>
           {/* RENDERIZAÇÃO CONDICIONAL DAS TELAS */}
-          {activeSection === 'dashboard' ? (
-            <div>
-              <h2 style={{ color: '#4FD1C5' }}>Bem-vindo ao Painel</h2>
-              <p style={{ opacity: 0.7 }}>Selecione uma opção no menu lateral para gerenciar sua plataforma.</p>
-            </div>
-          ) : (
-            <Lojas />
-          )}
+          {activeSection === "dashboard" ? <Dashboard /> : <Lojas />}
+
         </div>
       </main>
     </div>

@@ -154,7 +154,7 @@ const TelaLogin = ({ onLoginSuccess }) => {
         <div style={styles.header}>
           <div style={styles.logoCircle}>🚚</div>
           <h1 style={styles.brand}>ENTREGAQUI</h1>
-          <p style={styles.subtitle}>Logística & Gestão de Pedidos</p>
+          <p style={styles.subtitle}>Gestão de Credenciados</p>
         </div>
 
         <form onSubmit={handleSubmit}>
