@@ -175,8 +175,8 @@ const PaginaInicialCliente = () => {
 
               <div>
                 <h1 style={styles.logo}>
-                  <span style={styles.logoBlue}>Entrega</span>
-                  <span style={styles.logoGreen}>Aqui</span>
+                  <span style={styles.logoBlue}>Food</span>
+                  <span style={styles.logoGreen}>Way</span>
                 </h1>
                 <div
                   style={{
@@ -185,7 +185,7 @@ const PaginaInicialCliente = () => {
                     marginTop: "2px",
                   }}
                 >
-                  Delivery rápido e seguro
+                  Economia pra quem vende, vantagem pra quem compra
                 </div>
               </div>
             </div>

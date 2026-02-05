@@ -153,7 +153,7 @@ const TelaLogin = ({ onLoginSuccess }) => {
       <div style={styles.loginCard}>
         <div style={styles.header}>
           <div style={styles.logoCircle}>🚚</div>
-          <h1 style={styles.brand}>ENTREGAQUI</h1>
+          <h1 style={styles.brand}>FoodWay</h1>
           <p style={styles.subtitle}>Gestão de Credenciados</p>
         </div>
 

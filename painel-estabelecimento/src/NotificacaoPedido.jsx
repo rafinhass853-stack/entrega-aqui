@@ -1,151 +1,303 @@
-import React from 'react';
+// NotificacaoPedido.jsx
+import React, { useMemo } from "react";
+import { Clock, MapPin, Phone, Package, CheckCircle, XCircle, Bell, CreditCard } from "lucide-react";
+import { formatMoneyBR } from "./StylesPedidos";
+
+const overlayStyle = {
+  position: "fixed",
+  inset: 0,
+  background: "rgba(15, 23, 42, 0.58)",
+  zIndex: 9999,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  padding: 12
+};
+
+const cardStyle = (isMobile) => ({
+  width: "min(720px, 100%)",
+  background: "white",
+  borderRadius: 18,
+  border: "1px solid #E2E8F0",
+  boxShadow: "0 25px 70px rgba(0,0,0,0.25)",
+  overflow: "hidden"
+});
+
+const headerStyle = {
+  background: "linear-gradient(135deg, #0F3460 0%, #1E40AF 100%)",
+  color: "white",
+  padding: "16px 18px",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 12
+};
+
+const badgeStyle = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+  padding: "6px 10px",
+  borderRadius: 999,
+  background: "rgba(255,255,255,0.18)",
+  border: "1px solid rgba(255,255,255,0.25)",
+  fontWeight: 900,
+  fontSize: 12,
+  whiteSpace: "nowrap"
+};
+
+const sectionStyle = {
+  padding: 16,
+  borderTop: "1px solid #E2E8F0"
+};
+
+const btnBase = {
+  padding: "12px 14px",
+  borderRadius: 12,
+  border: "none",
+  cursor: "pointer",
+  fontWeight: 1000,
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
+  gap: 10,
+  flex: 1,
+  minWidth: 140
+};
 
 const NotificacaoPedido = ({ isOpen, pedido, onAceitar, onRecusar, calcularTempo }) => {
+  const isMobile = window.innerWidth < 768;
+
+  const itensPreview = useMemo(() => {
+    const itens = Array.isArray(pedido?.itens) ? pedido.itens : [];
+    const top = itens.slice(0, 4);
+    const resto = Math.max(0, itens.length - top.length);
+    return { top, resto, total: itens.length };
+  }, [pedido]);
+
   if (!isOpen || !pedido) return null;
 
-  // Extração segura dos dados baseada no Firebase
-  const { cliente, pagamento, itens, numeroPedido, dataCriacao, observacoes } = pedido;
+  const tempo = calcularTempo ? calcularTempo(pedido.dataCriacao) : "";
+  const total = pedido.pagamento?.total ?? pedido.total ?? 0;
+
+  const enderecoLinha = `${pedido.cliente?.rua || ""}, ${pedido.cliente?.numero || ""} - ${pedido.cliente?.bairro || ""}`;
+  const cidadeLinha = `${pedido.cliente?.cidade || ""}${pedido.cliente?.estado ? " - " + pedido.cliente.estado : ""}`;
 
   return (
-    <div style={styles.modalOverlay}>
-      <div style={styles.modalNovoPedido}>
-        <div style={styles.modalHeaderNovoPedido}>
-          <div style={styles.tituloNovoPedido}>
-            <span style={styles.emojiNovoPedido}>🎉</span>
-            <h2 style={styles.tituloModal}>NOVO PEDIDO RECEBIDO!</h2>
-          </div>
-          <div style={styles.badgeNovoPedido}>AGORA</div>
-        </div>
-
-        <div style={styles.pedidoDetalhesModal}>
-          <div style={styles.infoClienteModal}>
-            <div style={styles.clienteInfo}>
-              <span style={styles.clienteNome}>{cliente?.nomeCompleto || 'Cliente'}</span>
-              <span style={styles.clienteTelefone}>📞 {cliente?.telefone || 'Sem telefone'}</span>
+    <div
+      style={overlayStyle}
+      onMouseDown={(e) => {
+        // Fecha clicando fora? (se quiser no futuro, habilita aqui)
+        // if (e.target === e.currentTarget) ...
+      }}
+    >
+      <div style={cardStyle(isMobile)}>
+        {/* HEADER */}
+        <div style={headerStyle}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 12,
+                background: "rgba(255,255,255,0.15)",
+                border: "1px solid rgba(255,255,255,0.25)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center"
+              }}
+            >
+              <Bell size={18} />
             </div>
-            <div style={styles.pedidoNumeroModal}>
-              PEDIDO #{numeroPedido || '------'}
-            </div>
-          </div>
 
-          <div style={styles.enderecoModal}>
-            <span style={styles.enderecoIcon}>📍</span>
             <div>
-              <div style={styles.enderecoTexto}>
-                {cliente?.rua || 'Rua não informada'}, {cliente?.numero || 'S/N'}
+              <div style={{ fontSize: 14, fontWeight: 1000, letterSpacing: 0.2 }}>Novo Pedido Recebido</div>
+              <div style={{ fontSize: 12, opacity: 0.9 }}>
+                Pedido <strong>#{pedido.numeroPedido || pedido.id?.slice(-6)?.toUpperCase()}</strong>
               </div>
-              <div style={styles.enderecoBairro}>
-                {cliente?.bairro} - {cliente?.cidade}
-              </div>
-              {cliente?.complemento && (
-                <div style={styles.enderecoComplemento}>
-                  <strong>Obs:</strong> {cliente.complemento}
-                </div>
-              )}
             </div>
           </div>
 
-          <div style={styles.itensModal}>
-            <h4 style={styles.tituloItens}>ITENS DO PEDIDO:</h4>
-            <div style={styles.listaItens}>
-              {itens?.map((item, idx) => (
-                <div key={idx} style={styles.itemModal}>
-                  <div style={styles.itemInfo}>
-                    <span style={styles.itemQuantidade}>{item.quantidade}x</span>
-                    <span style={styles.itemNome}>{item.nome}</span>
-                  </div>
-                  <span style={styles.itemPreco}>
-                    R$ {(item.preco * item.quantidade).toFixed(2)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Seção de Observações */}
-          <div style={styles.observacoesModal}>
-            <strong>Observações do Pedido:</strong>
-            <p style={styles.observacaoTexto}>
-              {observacoes || 'Nenhuma observação adicional'}
-            </p>
-          </div>
-
-          {/* Detalhes de Pagamento e Troco */}
-          <div style={styles.totalModal}>
-            <div style={styles.pagamentoInfo}>
-              <span style={styles.metodoPagamento}>
-                FORMA: {pagamento?.metodo?.toUpperCase()}
-              </span>
-              {pagamento?.metodo === 'dinheiro' && pagamento?.troco && (
-                <span style={styles.trocoAlerta}>
-                  TROCO PARA: R$ {parseFloat(pagamento.troco).toFixed(2)}
-                </span>
-              )}
-              <span style={styles.labelTotal}>TOTAL DO PEDIDO:</span>
-            </div>
-            <span style={styles.valorTotalModal}>
-              R$ {pagamento?.total?.toFixed(2) || '0,00'}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            <span style={badgeStyle}>
+              <Clock size={14} /> {tempo || "Agora"}
+            </span>
+            <span style={badgeStyle}>
+              <CreditCard size={14} /> {formatMoneyBR(total)}
             </span>
           </div>
+        </div>
 
-          <div style={styles.acoesModal}>
-            <button style={styles.btnRecusarModal} onClick={() => onRecusar(pedido.id)}>
-              RECUSAR
-            </button>
-            <button style={styles.btnAceitarModal} onClick={() => onAceitar(pedido.id)}>
-              ACEITAR PEDIDO
-            </button>
+        {/* CLIENTE + ENDEREÇO */}
+        <div style={sectionStyle}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.2fr 0.8fr", gap: 12 }}>
+            <div
+              style={{
+                border: "1px solid #E2E8F0",
+                background: "#F8FAFC",
+                borderRadius: 14,
+                padding: 14
+              }}
+            >
+              <div style={{ fontSize: 12, fontWeight: 900, color: "#64748B", marginBottom: 8 }}>CLIENTE</div>
+              <div style={{ fontSize: 16, fontWeight: 1100, color: "#0F3460" }}>{pedido.cliente?.nomeCompleto || "Cliente"}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8, color: "#475569", fontWeight: 800, fontSize: 13 }}>
+                <Phone size={14} />
+                {pedido.cliente?.telefone || "Sem telefone"}
+              </div>
+            </div>
+
+            <div
+              style={{
+                border: "1px solid #E2E8F0",
+                background: "#FFFFFF",
+                borderRadius: 14,
+                padding: 14
+              }}
+            >
+              <div style={{ fontSize: 12, fontWeight: 900, color: "#64748B", marginBottom: 8 }}>ENDEREÇO</div>
+              <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                <MapPin size={16} color="#0F3460" style={{ marginTop: 2 }} />
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 900, color: "#0F3460" }}>{enderecoLinha || "-"}</div>
+                  <div style={{ fontSize: 12, color: "#64748B", marginTop: 4 }}>{cidadeLinha || "-"}</div>
+                </div>
+              </div>
+
+              {pedido.cliente?.complemento ? (
+                <div
+                  style={{
+                    marginTop: 10,
+                    padding: 10,
+                    borderRadius: 12,
+                    border: "1px solid #FDE68A",
+                    background: "#FFFBEB",
+                    color: "#92400E",
+                    fontWeight: 900,
+                    fontSize: 12
+                  }}
+                >
+                  Obs: {pedido.cliente.complemento}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+
+        {/* ITENS */}
+        <div style={sectionStyle}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 1100, color: "#0F3460" }}>
+              <Package size={16} /> Itens ({itensPreview.total})
+            </div>
+            <div style={{ fontSize: 12, color: "#64748B", fontWeight: 900 }}>
+              Total: <span style={{ color: "#0F3460" }}>{formatMoneyBR(total)}</span>
+            </div>
           </div>
 
-          <div style={styles.tempoEstimado}>
-            ⏰ Recebido há {calcularTempo(dataCriacao)}
-          </div>
+          {itensPreview.top.length === 0 ? (
+            <div style={{ fontSize: 13, color: "#64748B" }}>Sem itens.</div>
+          ) : (
+            <div style={{ display: "grid", gap: 8 }}>
+              {itensPreview.top.map((it, idx) => {
+                const qtd = Number(it.quantidade || 1);
+                const nome = it.nome || "Item";
+                const preco = Number(it.precoTotal || it.preco || 0);
+                const totalLinha = it.precoTotal ? preco : preco * qtd;
+
+                return (
+                  <div
+                    key={idx}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 10,
+                      padding: "10px 12px",
+                      borderRadius: 14,
+                      border: "1px solid #E2E8F0",
+                      background: "#F8FAFC"
+                    }}
+                  >
+                    <div style={{ fontSize: 13, fontWeight: 1000, color: "#0F3460" }}>
+                      {qtd}x {nome}
+                      {it.adicionaisTexto ? (
+                        <div style={{ fontSize: 12, color: "#64748B", fontWeight: 800, marginTop: 4 }}>
+                          + {it.adicionaisTexto}
+                        </div>
+                      ) : null}
+                    </div>
+                    <div style={{ fontSize: 13, fontWeight: 1100, color: "#0F3460", whiteSpace: "nowrap" }}>{formatMoneyBR(totalLinha)}</div>
+                  </div>
+                );
+              })}
+
+              {itensPreview.resto > 0 && (
+                <div style={{ fontSize: 12, color: "#64748B", fontWeight: 900 }}>+ {itensPreview.resto} item(ns)</div>
+              )}
+            </div>
+          )}
+
+          {pedido.observacoes ? (
+            <div
+              style={{
+                marginTop: 12,
+                padding: 12,
+                borderRadius: 14,
+                border: "1px solid #FDE68A",
+                background: "#FFFBEB",
+                color: "#92400E",
+                fontWeight: 1000,
+                fontSize: 13
+              }}
+            >
+              <strong>Observações:</strong> {pedido.observacoes}
+            </div>
+          ) : null}
+        </div>
+
+        {/* AÇÕES */}
+        <div
+          style={{
+            padding: 16,
+            borderTop: "1px solid #E2E8F0",
+            background: "#F8FAFC",
+            display: "flex",
+            gap: 10,
+            flexWrap: "wrap"
+          }}
+        >
+          <button
+            onClick={onRecusar}
+            style={{
+              ...btnBase,
+              background: "#FEE2E2",
+              color: "#DC2626"
+            }}
+          >
+            <XCircle size={18} />
+            Recusar
+          </button>
+
+          <button
+            onClick={onAceitar}
+            style={{
+              ...btnBase,
+              background: "linear-gradient(135deg, #10B981 0%, #059669 100%)",
+              color: "white"
+            }}
+          >
+            <CheckCircle size={18} />
+            Aceitar Pedido
+          </button>
+        </div>
+
+        {/* Rodapé (dica) */}
+        <div style={{ padding: "10px 16px", fontSize: 11, color: "#64748B", fontWeight: 800 }}>
+          Dica: ao aceitar, o pedido muda automaticamente para <strong>EM PREPARO</strong>.
         </div>
       </div>
     </div>
   );
-};
-
-// Estilos atualizados para suportar as novas informações
-const styles = {
-  // ... (manter estilos anteriores)
-  modalOverlay: { position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.85)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999, padding: '20px' },
-  modalNovoPedido: { backgroundColor: '#00171A', width: '100%', maxWidth: '480px', borderRadius: '15px', border: '2px solid #4FD1C5', overflow: 'hidden', boxShadow: '0 10px 30px rgba(0,0,0,0.5)' },
-  modalHeaderNovoPedido: { background: 'linear-gradient(90deg, #4FD1C5 0%, #38B2AC 100%)', padding: '15px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-  tituloNovoPedido: { display: 'flex', alignItems: 'center', gap: '10px' },
-  emojiNovoPedido: { fontSize: '24px' },
-  tituloModal: { color: '#00171A', margin: 0, fontSize: '18px', fontWeight: 'bold' },
-  badgeNovoPedido: { backgroundColor: '#00171A', color: '#4FD1C5', padding: '4px 12px', borderRadius: '20px', fontSize: '11px', fontWeight: 'bold' },
-  pedidoDetalhesModal: { padding: '20px' },
-  infoClienteModal: { display: 'flex', justifyContent: 'space-between', marginBottom: '15px', alignItems: 'flex-start' },
-  clienteNome: { color: '#fff', fontSize: '18px', fontWeight: 'bold', display: 'block' },
-  clienteTelefone: { color: '#81E6D9', fontSize: '14px', marginTop: '4px', display: 'block' },
-  pedidoNumeroModal: { backgroundColor: 'rgba(79, 209, 197, 0.1)', color: '#4FD1C5', padding: '6px 12px', borderRadius: '8px', fontSize: '12px', fontWeight: 'bold' },
-  enderecoModal: { display: 'flex', gap: '12px', marginBottom: '15px', padding: '12px', backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: '10px' },
-  enderecoIcon: { color: '#4FD1C5', fontSize: '18px' },
-  enderecoTexto: { color: '#fff', fontSize: '14px', fontWeight: 'bold' },
-  enderecoBairro: { color: '#CBD5E0', fontSize: '12px' },
-  enderecoComplemento: { color: '#81E6D9', fontSize: '12px', marginTop: '4px' },
-  itensModal: { marginBottom: '15px' },
-  tituloItens: { color: '#81E6D9', fontSize: '13px', marginBottom: '8px', letterSpacing: '1px' },
-  listaItens: { backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: '10px', padding: '10px', maxHeight: '180px', overflowY: 'auto' },
-  itemModal: { display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' },
-  itemInfo: { display: 'flex', gap: '10px', alignItems: 'center' },
-  itemQuantidade: { color: '#F6E05E', fontWeight: 'bold', fontSize: '14px' },
-  itemNome: { color: '#fff', fontSize: '14px' },
-  itemPreco: { color: '#4FD1C5', fontSize: '14px', fontWeight: '500' },
-  observacoesModal: { padding: '12px', backgroundColor: 'rgba(255, 255, 255, 0.05)', borderRadius: '10px', marginBottom: '15px', borderLeft: '4px solid #F6E05E' },
-  observacaoTexto: { color: '#fff', fontSize: '13px', margin: '5px 0 0 0', fontStyle: 'italic' },
-  totalModal: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '15px', backgroundColor: 'rgba(79, 209, 197, 0.1)', borderRadius: '10px', marginBottom: '20px' },
-  pagamentoInfo: { display: 'flex', flexDirection: 'column', gap: '2px' },
-  metodoPagamento: { fontSize: '11px', color: '#81E6D9', fontWeight: 'bold' },
-  trocoAlerta: { fontSize: '12px', color: '#F6E05E', fontWeight: 'bold' },
-  labelTotal: { color: '#fff', fontSize: '14px', fontWeight: '500', marginTop: '4px' },
-  valorTotalModal: { color: '#4FD1C5', fontSize: '24px', fontWeight: 'bold' },
-  acoesModal: { display: 'flex', gap: '10px' },
-  btnAceitarModal: { flex: 2, backgroundColor: '#48BB78', color: 'white', border: 'none', padding: '15px', borderRadius: '10px', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px' },
-  btnRecusarModal: { flex: 1, backgroundColor: '#F56565', color: 'white', border: 'none', padding: '15px', borderRadius: '10px', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px' },
-  tempoEstimado: { textAlign: 'center', color: '#718096', fontSize: '12px', marginTop: '15px' }
 };
 
 export default NotificacaoPedido;

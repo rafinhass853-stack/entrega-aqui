@@ -335,7 +335,7 @@ export const Layout = ({ children, isMobile, user }) => {
           <span style={{ fontSize: "26px" }}>🏪</span>
           <div>
             <div style={{ color: "#4FD1C5", fontSize: "18px", fontWeight: "800" }}>
-              ENTREGAQUI
+              FoodWay
             </div>
             <div style={{ color: "#81E6D9", fontSize: "11px", opacity: 0.7 }}>
               Painel do Estabelecimento

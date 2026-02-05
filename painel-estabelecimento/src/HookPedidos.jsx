@@ -1,5 +1,5 @@
 // HookPedidos.jsx
-// Toda a lógica (Firestore + filtros + stats + faturamento + histórico + modais)
+// Firestore + filtros + stats + faturamento + histórico + modais + notificações
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { db } from "./firebase";
@@ -38,8 +38,8 @@ export const useIsMobile = () => {
 export const usePedidos = ({ user }) => {
   const isMobile = useIsMobile();
 
-  // tabs
-  const [tabAtiva, setTabAtiva] = useState("todos");
+  // tabs (sem "todos")
+  const [tabAtiva, setTabAtiva] = useState("pendente");
 
   // dados
   const [pedidos, setPedidos] = useState([]);
@@ -66,9 +66,65 @@ export const usePedidos = ({ user }) => {
   const [modalDetalhesOpen, setModalDetalhesOpen] = useState(false);
   const [pedidoDetalhe, setPedidoDetalhe] = useState(null);
 
-  const audioRef = useRef(null);
+  // refs
   const pedidosAnterioresRef = useRef([]);
   const notificationSoundRef = useRef(null);
+
+  // WebAudio (sino)
+  const audioCtxRef = useRef(null);
+  const audioUnlockedRef = useRef(false);
+
+  const unlockAudio = useCallback(() => {
+    try {
+      if (audioUnlockedRef.current) return;
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContext) return;
+
+      if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
+
+      // resume no primeiro gesto
+      audioCtxRef.current.resume?.().catch(() => {});
+      audioUnlockedRef.current = true;
+    } catch (_) {}
+  }, []);
+
+  const playBell = useCallback(() => {
+    try {
+      const ctx = audioCtxRef.current;
+      if (!ctx) return;
+
+      const now = ctx.currentTime;
+
+      // Osciladores (efeito sino simples)
+      const o1 = ctx.createOscillator();
+      const o2 = ctx.createOscillator();
+      const g = ctx.createGain();
+
+      o1.type = "sine";
+      o2.type = "triangle";
+      o1.frequency.setValueAtTime(880, now);
+      o2.frequency.setValueAtTime(1320, now);
+
+      // envelope
+      g.gain.setValueAtTime(0.0001, now);
+      g.gain.exponentialRampToValueAtTime(0.35, now + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + 0.9);
+
+      o1.connect(g);
+      o2.connect(g);
+      g.connect(ctx.destination);
+
+      o1.start(now);
+      o2.start(now);
+      o1.stop(now + 1.0);
+      o2.stop(now + 1.0);
+    } catch (_) {}
+  }, []);
+
+  const playConfirm = useCallback(() => {
+    // som de confirmação quando muda status (mantém mp3)
+    notificationSoundRef.current?.play().catch(() => {});
+  }, []);
 
   const abrirDetalhes = useCallback((pedido) => {
     setPedidoDetalhe(pedido);
@@ -135,13 +191,21 @@ export const usePedidos = ({ user }) => {
     const savedConfig = localStorage.getItem("configNotificacao");
     if (savedConfig) setConfigNotificacao(JSON.parse(savedConfig));
 
-    audioRef.current = new Audio("https://assets.mixkit.co/sfx/preview/mixkit-classic-alarm-995.mp3");
-    notificationSoundRef.current = new Audio("https://assets.mixkit.co/sfx/preview/mixkit-correct-answer-tone-2870.mp3");
+    // confirmação ao mudar status (mp3)
+    notificationSoundRef.current = new Audio(
+      "https://assets.mixkit.co/sfx/preview/mixkit-correct-answer-tone-2870.mp3"
+    );
+
+    // desbloqueio do áudio no primeiro clique/toque
+    const onFirstGesture = () => unlockAudio();
+    window.addEventListener("pointerdown", onFirstGesture, { once: true });
 
     if ("Notification" in window && Notification.permission === "default") {
       Notification.requestPermission();
     }
-  }, []);
+
+    return () => window.removeEventListener("pointerdown", onFirstGesture);
+  }, [unlockAudio]);
 
   const handleConfigNotificacao = useCallback((tipo) => {
     setConfigNotificacao((prev) => {
@@ -193,6 +257,7 @@ export const usePedidos = ({ user }) => {
               cliente: data.cliente || {},
               pagamento: data.pagamento || {},
               itens: Array.isArray(data.itens) ? data.itens : [],
+              observacoes: data.observacoes || data.obs || data.observacao || "",
               ehHoje,
               tempoDecorrido: calcularTempoDecorrido(data.dataCriacao)
             });
@@ -208,24 +273,35 @@ export const usePedidos = ({ user }) => {
           return dbb - da;
         });
 
-        // detectar novos pedidos
+        // detectar novos pedidos (pendentes novos)
         if (pedidosAnterioresRef.current.length > 0) {
           const novos = lista.filter(
-            (p) => p.status === "pendente" && !pedidosAnterioresRef.current.some((old) => old.id === p.id)
+            (p) =>
+              p.status === "pendente" &&
+              !pedidosAnterioresRef.current.some((old) => old.id === p.id)
           );
 
           if (novos.length > 0) {
             const novoPedido = novos[0];
+
             setPedidoParaAceitar(novoPedido);
             setMostrarModalNovoPedido(true);
 
             if (configNotificacao.som) {
-              audioRef.current?.play().catch(() => {});
+              // sino
+              unlockAudio();
+              playBell();
             }
 
-            if (configNotificacao.desktop && "Notification" in window && Notification.permission === "granted") {
-              new Notification(`🎉 Novo Pedido #${novoPedido.numeroPedido}`, {
-                body: `${novoPedido.cliente?.nomeCompleto || "Cliente"} - ${formatMoneyBR(novoPedido.pagamento?.total)}`,
+            if (
+              configNotificacao.desktop &&
+              "Notification" in window &&
+              Notification.permission === "granted"
+            ) {
+              new Notification(`🔔 Novo Pedido #${novoPedido.numeroPedido}`, {
+                body: `${novoPedido.cliente?.nomeCompleto || "Cliente"} - ${formatMoneyBR(
+                  novoPedido.pagamento?.total
+                )}`,
                 icon: "https://cdn-icons-png.flaticon.com/512/3075/3075977.png",
                 tag: `pedido-${novoPedido.id}`
               });
@@ -236,7 +312,9 @@ export const usePedidos = ({ user }) => {
                 id: novoPedido.id,
                 tipo: "novo_pedido",
                 titulo: `Novo Pedido #${novoPedido.numeroPedido}`,
-                mensagem: `${novoPedido.cliente?.nomeCompleto || "Cliente"} - ${formatMoneyBR(novoPedido.pagamento?.total)}`,
+                mensagem: `${novoPedido.cliente?.nomeCompleto || "Cliente"} - ${formatMoneyBR(
+                  novoPedido.pagamento?.total
+                )}`,
                 data: new Date(),
                 lida: false
               },
@@ -274,7 +352,7 @@ export const usePedidos = ({ user }) => {
       if (unsub1) unsub1();
       if (unsub2) unsub2();
     };
-  }, [user, configNotificacao, calcularTempoDecorrido, resolverEstabelecimentoId]);
+  }, [user, configNotificacao, calcularTempoDecorrido, resolverEstabelecimentoId, playBell, unlockAudio]);
 
   const handleStatusChange = useCallback(
     async (id, novoStatus) => {
@@ -291,7 +369,7 @@ export const usePedidos = ({ user }) => {
         });
 
         if (configNotificacao.som) {
-          notificationSoundRef.current?.play().catch(() => {});
+          playConfirm();
         }
 
         setMostrarModalNovoPedido(false);
@@ -300,7 +378,7 @@ export const usePedidos = ({ user }) => {
         alert("Erro ao atualizar status.");
       }
     },
-    [user, configNotificacao]
+    [user, configNotificacao, playConfirm]
   );
 
   const enviarMensagemWhatsApp = useCallback((pedido) => {
@@ -308,7 +386,8 @@ export const usePedidos = ({ user }) => {
     const nomeLoja = pedido.restauranteNome || pedido.estabelecimentoNome || "restaurante";
     const mensagem =
       `Olá ${pedido.cliente?.nomeCompleto || "Cliente"}! Aqui é o ${nomeLoja}. ` +
-      `Seu pedido #${pedido.numeroPedido} está com status: ${String(pedido.status || "").toUpperCase()}. ` +
+      `Seu pedido #${pedido.numeroPedido} está com status: ${String(pedido.status || "")
+        .toUpperCase()}. ` +
       `Valor: ${formatMoneyBR(pedido.pagamento?.total)}.`;
 
     if (telefone) window.open(`https://wa.me/55${telefone}?text=${encodeURIComponent(mensagem)}`, "_blank");
@@ -346,10 +425,9 @@ export const usePedidos = ({ user }) => {
     });
   }, [pedidos, busca, dataInicio, dataFim]);
 
-  // tab final
+  // tab final (sem "todos")
   const pedidosFiltrados = useMemo(() => {
     return pedidosBaseFiltrados.filter((p) => {
-      if (tabAtiva === "todos") return true;
       if (tabAtiva === "historico") return ["entregue", "cancelado", "concluido"].includes(p.status);
       return p.status === tabAtiva;
     });
@@ -432,7 +510,7 @@ export const usePedidos = ({ user }) => {
     return { hasPeriodo, totalPeriodo, totalHoje, total7, total15, total30 };
   }, [pedidosBaseFiltrados, dataInicio, dataFim]);
 
-  // histórico compacto
+  // histórico
   const historicoAceitas = useMemo(() => {
     if (tabAtiva !== "historico") return [];
     return pedidosFiltrados.filter((p) => ["entregue", "concluido"].includes(p.status));

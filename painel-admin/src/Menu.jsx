@@ -88,7 +88,7 @@ const Menu = ({ onLogout }) => {
             style={{ color: '#4FD1C5', margin: 0, cursor: 'pointer', display: isSidebarOpen ? 'block' : 'none' }}
             onClick={() => setIsSidebarOpen(!isSidebarOpen)}
           >
-            Entregaqui
+            FoodWay
           </h2>
         </div>
         

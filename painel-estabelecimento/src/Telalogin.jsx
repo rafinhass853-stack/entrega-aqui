@@ -146,7 +146,7 @@ const TelaLogin = () => {
           <div style={styles.header}>
             <div style={styles.logoContainer}>🏪</div>
             <div>
-              <h1 style={styles.brand}>ENTREGAQUI</h1>
+              <h1 style={styles.brand}>FoodWay</h1>
               <p style={styles.subtitle}>Painel do Estabelecimento</p>
             </div>
           </div>

@@ -1,11 +1,11 @@
 // Pedidos.jsx
-// Agora bem mais limpo: UI usa ComponentsPedidos + lógica via HookPedidos
+// UI usa ComponentsPedidos + lógica via HookPedidos
 
 import React, { useMemo } from "react";
 import { Layout } from "./Menu";
 import NotificacaoPedido from "./NotificacaoPedido";
 
-import { Layers, Clock, Package, Truck, CheckCircle, CreditCard } from "lucide-react";
+import { Clock, Package, Truck, CheckCircle } from "lucide-react";
 
 import { usePedidos } from "./HookPedidos";
 import {
@@ -25,10 +25,9 @@ import {
 const Pedidos = ({ user }) => {
   const p = usePedidos({ user });
 
-  // Tabs com contadores dinâmicos (acompanham filtros)
+  // Tabs (sem "TODOS")
   const tabs = useMemo(() => {
     return [
-      { id: "todos", label: "TODOS", count: p.stats.totalBase, icon: <Layers size={16} /> },
       { id: "pendente", label: "PENDENTES", count: p.stats.pendentes, icon: <Clock size={16} /> },
       { id: "preparo", label: "EM PREPARO", count: p.stats.preparo, icon: <Package size={16} /> },
       { id: "entrega", label: "ENTREGA", count: p.stats.entrega, icon: <Truck size={16} /> },
@@ -55,7 +54,7 @@ const Pedidos = ({ user }) => {
           dataFim={p.dataFim}
         />
 
-        {/* Stats + Faturamento (dentro do "header visual") */}
+        {/* Stats + Faturamento */}
         <div
           style={{
             background: "linear-gradient(135deg, #0F3460 0%, #1E40AF 100%)",
@@ -104,6 +103,11 @@ const Pedidos = ({ user }) => {
                 formatHora={p.formatHora}
                 abrirDetalhes={p.abrirDetalhes}
                 enviarMensagemWhatsApp={p.enviarMensagemWhatsApp}
+                dataInicio={p.dataInicio}
+                setDataInicio={p.setDataInicio}
+                dataFim={p.dataFim}
+                setDataFim={p.setDataFim}
+                toISODateLocal={p.toISODateLocal}
               />
             ) : (
               <div

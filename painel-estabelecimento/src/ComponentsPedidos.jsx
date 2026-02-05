@@ -1,7 +1,6 @@
 // ComponentsPedidos.jsx
-// Componentes (Modal, Header, filtros, tabs, cards, histórico compacto, detalhes)
 
-import React from "react";
+import React, { useMemo, useState } from "react";
 import {
   Package,
   Bell,
@@ -9,7 +8,6 @@ import {
   Filter,
   Printer,
   RotateCcw,
-  Layers,
   Clock,
   Truck,
   CheckCircle,
@@ -21,7 +19,8 @@ import {
   MapPin,
   Phone,
   MessageCircle,
-  Shield
+  Shield,
+  ListOrdered
 } from "lucide-react";
 
 import {
@@ -34,7 +33,8 @@ import {
   getBaseUnit,
   getAdicionalUnit,
   getUnitFinal,
-  getTrocoInfo
+  getTrocoInfo,
+  toISODateLocal
 } from "./StylesPedidos";
 
 export const Modal = ({ open, title, onClose, children, isMobile }) => {
@@ -156,6 +156,7 @@ export const HeaderPedidos = ({ isMobile, notificacoes, busca, dataInicio, dataF
               cursor: "pointer",
               position: "relative"
             }}
+            title="Notificações"
           >
             <Bell size={22} />
             {naoLidas > 0 && (
@@ -188,7 +189,7 @@ export const HeaderPedidos = ({ isMobile, notificacoes, busca, dataInicio, dataF
 
 export const StatsGrid = ({ isMobile, stats }) => {
   const cards = [
-    { label: "TOTAL FILTRADO", value: stats.totalBase, color: "#38BDF8", icon: <Layers size={20} /> },
+    { label: "TOTAL FILTRADO", value: stats.totalBase, color: "#38BDF8", icon: <ListOrdered size={20} /> },
     { label: "PENDENTES", value: stats.pendentes, color: "#F59E0B", icon: <Clock size={20} /> },
     { label: "EM PREPARO", value: stats.preparo, color: "#3B82F6", icon: <Package size={20} /> },
     { label: "ENTREGA", value: stats.entrega, color: "#8B5CF6", icon: <Truck size={20} /> },
@@ -587,9 +588,7 @@ export const EmptyState = ({ tabAtiva, limparFiltros }) => {
         {tabAtiva === "pendente"
           ? "Não há pedidos pendentes no momento."
           : tabAtiva === "historico"
-          ? "Não há histórico de pedidos."
-          : tabAtiva === "todos"
-          ? "Nenhum pedido para os filtros selecionados."
+          ? "Não há histórico para os filtros selecionados."
           : "Não há pedidos nesta categoria."}
       </p>
       <button
@@ -610,26 +609,167 @@ export const EmptyState = ({ tabAtiva, limparFiltros }) => {
   );
 };
 
-export const HistoricoCompacto = ({ isMobile, historicoAceitas, historicoCanceladas, formatHora, abrirDetalhes, enviarMensagemWhatsApp }) => {
-  const Card = ({ titulo, cor, icon, lista, valorTotal }) => (
+/**
+ * ✅ HISTÓRICO EM LINHA/TABELA
+ * - Botões: Aceitas / Canceladas
+ * - Inputs: Data inicial / Data final fixos no topo do histórico
+ */
+export const HistoricoCompacto = ({
+  isMobile,
+  historicoAceitas,
+  historicoCanceladas,
+  formatHora,
+  abrirDetalhes,
+  enviarMensagemWhatsApp,
+  dataInicio,
+  setDataInicio,
+  dataFim,
+  setDataFim,
+  toISODateLocal
+}) => {
+  const [tipo, setTipo] = useState("aceitas"); // "aceitas" | "canceladas"
+
+  const lista = tipo === "aceitas" ? historicoAceitas : historicoCanceladas;
+  const valorTotal = useMemo(
+    () => lista.reduce((sum, p) => sum + toNumber(p.pagamento?.total), 0),
+    [lista]
+  );
+
+  const headerBg =
+    tipo === "aceitas"
+      ? "linear-gradient(135deg, #10B981 0%, #059669 100%)"
+      : "linear-gradient(135deg, #EF4444 0%, #DC2626 100%)";
+
+  return (
     <div style={{ background: "white", borderRadius: 16, border: "1px solid #E2E8F0", overflow: "hidden" }}>
-      <div style={{ padding: 14, background: cor, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10, color: "white", fontWeight: 900 }}>
-          {icon}
-          <span>{titulo}</span>
+      {/* Topo do histórico (fixo) */}
+      <div
+        style={{
+          padding: 14,
+          background: headerBg,
+          color: "white",
+          display: "flex",
+          flexDirection: isMobile ? "column" : "row",
+          gap: 12,
+          alignItems: isMobile ? "stretch" : "center",
+          justifyContent: "space-between"
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10, fontWeight: 1000 }}>
+          {tipo === "aceitas" ? <CheckCircle size={18} /> : <XCircle size={18} />}
+          <span>Histórico</span>
         </div>
 
-        <div style={{ textAlign: "right", color: "white" }}>
-          <div style={{ fontSize: 11, opacity: 0.9, fontWeight: 800 }}>TOTAL</div>
-          <div style={{ fontSize: 14, fontWeight: 1000 }}>{formatMoneyBR(valorTotal)}</div>
-          <div style={{ fontSize: 12, opacity: 0.9, marginTop: 2 }}>{lista.length} pedidos</div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <button
+            onClick={() => setTipo("aceitas")}
+            style={{
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: "1px solid rgba(255,255,255,0.35)",
+              background: tipo === "aceitas" ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.12)",
+              color: "white",
+              cursor: "pointer",
+              fontWeight: 1000,
+              display: "flex",
+              alignItems: "center",
+              gap: 8
+            }}
+            title="Aceitas (Entregue/Concluído)"
+          >
+            <CheckCircle size={16} /> Aceitas ({historicoAceitas.length})
+          </button>
+
+          <button
+            onClick={() => setTipo("canceladas")}
+            style={{
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: "1px solid rgba(255,255,255,0.35)",
+              background: tipo === "canceladas" ? "rgba(255,255,255,0.22)" : "rgba(255,255,255,0.12)",
+              color: "white",
+              cursor: "pointer",
+              fontWeight: 1000,
+              display: "flex",
+              alignItems: "center",
+              gap: 8
+            }}
+            title="Canceladas"
+          >
+            <XCircle size={16} /> Canceladas ({historicoCanceladas.length})
+          </button>
+        </div>
+
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "end" }}>
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 900, opacity: 0.9 }}>Data inicial</div>
+            <input
+              type="date"
+              value={dataInicio}
+              onChange={(e) => setDataInicio(e.target.value)}
+              style={{
+                padding: "10px 12px",
+                borderRadius: 10,
+                border: "1px solid rgba(255,255,255,0.35)",
+                background: "rgba(255,255,255,0.14)",
+                color: "white",
+                outline: "none"
+              }}
+            />
+          </div>
+
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 900, opacity: 0.9 }}>Data final</div>
+            <input
+              type="date"
+              value={dataFim}
+              onChange={(e) => setDataFim(e.target.value)}
+              style={{
+                padding: "10px 12px",
+                borderRadius: 10,
+                border: "1px solid rgba(255,255,255,0.35)",
+                background: "rgba(255,255,255,0.14)",
+                color: "white",
+                outline: "none"
+              }}
+            />
+          </div>
+
+          <button
+            onClick={() => {
+              const hoje = new Date();
+              setDataInicio(toISODateLocal(hoje));
+              setDataFim(toISODateLocal(hoje));
+            }}
+            style={{
+              padding: "10px 12px",
+              borderRadius: 10,
+              border: "1px solid rgba(255,255,255,0.35)",
+              background: "rgba(255,255,255,0.16)",
+              color: "white",
+              cursor: "pointer",
+              fontWeight: 1000
+            }}
+            title="Filtrar Hoje"
+          >
+            Hoje
+          </button>
+
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 11, opacity: 0.9, fontWeight: 900 }}>TOTAL</div>
+            <div style={{ fontSize: 16, fontWeight: 1100 }}>{formatMoneyBR(valorTotal)}</div>
+            <div style={{ fontSize: 12, opacity: 0.9 }}>{lista.length} pedidos</div>
+          </div>
         </div>
       </div>
 
+      {/* “Tabela” */}
       {lista.length === 0 ? (
-        <div style={{ padding: 14, color: "#64748B", fontSize: 13 }}>Nenhum pedido nesta lista.</div>
+        <div style={{ padding: 14, color: "#64748B", fontSize: 13 }}>
+          Nenhum pedido neste filtro.
+        </div>
       ) : (
-        <div style={{ padding: 10 }}>
+        <div style={{ padding: 12 }}>
           {lista.map((p) => {
             const st = getStatusStyle(p.status);
             const d = parsePedidoDate(p.dataCriacao);
@@ -640,9 +780,9 @@ export const HistoricoCompacto = ({ isMobile, historicoAceitas, historicoCancela
                 key={p.id}
                 style={{
                   display: "grid",
-                  gridTemplateColumns: isMobile ? "1fr" : "1.2fr 1.2fr 0.8fr 0.8fr auto",
+                  gridTemplateColumns: isMobile ? "1fr" : "1.1fr 1.4fr 0.7fr 0.9fr auto",
                   gap: 10,
-                  padding: "10px 10px",
+                  padding: "12px",
                   borderRadius: 12,
                   border: "1px solid #E2E8F0",
                   marginBottom: 10,
@@ -650,24 +790,24 @@ export const HistoricoCompacto = ({ isMobile, historicoAceitas, historicoCancela
                 }}
               >
                 <div>
-                  <div style={{ fontWeight: 1000, color: "#0F3460", fontSize: 13 }}>#{p.numeroPedido}</div>
-                  <div style={{ fontSize: 12, color: "#64748B", marginTop: 3 }}>
-                    <Clock size={12} style={{ marginRight: 6 }} />
+                  <div style={{ fontWeight: 1100, color: "#0F3460", fontSize: 13 }}>#{p.numeroPedido}</div>
+                  <div style={{ fontSize: 12, color: "#64748B", marginTop: 3, display: "flex", alignItems: "center", gap: 6 }}>
+                    <Clock size={12} />
                     {d ? formatHora(p.dataCriacao) : "—"}
                   </div>
                 </div>
 
                 <div>
                   <div style={{ fontWeight: 900, color: "#0F3460", fontSize: 13 }}>{p.cliente?.nomeCompleto || "Cliente"}</div>
-                  <div style={{ fontSize: 12, color: "#64748B", marginTop: 3 }}>
-                    <MapPin size={12} style={{ marginRight: 6 }} />
+                  <div style={{ fontSize: 12, color: "#64748B", marginTop: 3, display: "flex", alignItems: "center", gap: 6 }}>
+                    <MapPin size={12} />
                     {enderecoLinha || "-"}
                   </div>
                 </div>
 
                 <div>
                   <div style={{ fontSize: 12, fontWeight: 900, color: "#64748B" }}>TOTAL</div>
-                  <div style={{ fontWeight: 1000, color: "#0F3460" }}>{formatMoneyBR(p.pagamento?.total)}</div>
+                  <div style={{ fontWeight: 1100, color: "#0F3460" }}>{formatMoneyBR(p.pagamento?.total)}</div>
                 </div>
 
                 <div>
@@ -676,8 +816,9 @@ export const HistoricoCompacto = ({ isMobile, historicoAceitas, historicoCancela
                   </div>
                 </div>
 
+                {/* Botões com ícones (bonitos) */}
                 <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: isMobile ? "flex-start" : "flex-end" }}>
-                  <button onClick={() => abrirDetalhes(p)} style={iconBtnStyle("#E2E8F0", "#0F3460")} title="Ver detalhes">
+                  <button onClick={() => abrirDetalhes(p)} style={iconBtnStyle("#E2E8F0", "#0F3460")} title="Detalhes">
                     <Eye size={18} />
                   </button>
                   <button onClick={() => enviarMensagemWhatsApp(p)} style={iconBtnStyle("#25D366", "#25D366")} title="WhatsApp">
@@ -694,21 +835,18 @@ export const HistoricoCompacto = ({ isMobile, historicoAceitas, historicoCancela
       )}
     </div>
   );
-
-  const valorAceitas = historicoAceitas.reduce((sum, p) => sum + toNumber(p.pagamento?.total), 0);
-  const valorCanceladas = historicoCanceladas.reduce((sum, p) => sum + toNumber(p.pagamento?.total), 0);
-
-  return (
-    <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 16 }}>
-      <Card titulo="Aceitas (Entregue/Concluído)" cor="linear-gradient(135deg, #10B981 0%, #059669 100%)" icon={<CheckCircle size={18} />} lista={historicoAceitas} valorTotal={valorAceitas} />
-      <Card titulo="Canceladas" cor="linear-gradient(135deg, #EF4444 0%, #DC2626 100%)" icon={<XCircle size={18} />} lista={historicoCanceladas} valorTotal={valorCanceladas} />
-    </div>
-  );
 };
 
 export const PedidoCard = ({ isMobile, pedido, formatHora, abrirDetalhes, enviarMensagemWhatsApp, handleStatusChange }) => {
   const status = getStatusStyle(pedido.status);
   const trocoInfo = getTrocoInfo(pedido);
+
+  const itensPreview = useMemo(() => {
+    const itens = Array.isArray(pedido.itens) ? pedido.itens : [];
+    const top = itens.slice(0, 4);
+    const resto = Math.max(0, itens.length - top.length);
+    return { top, resto, totalItens: itens.length };
+  }, [pedido.itens]);
 
   return (
     <div
@@ -734,7 +872,7 @@ export const PedidoCard = ({ isMobile, pedido, formatHora, abrirDetalhes, enviar
         }}
       >
         <div>
-          <div style={{ fontSize: "24px", fontWeight: "1000", color: "#0F3460", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+          <div style={{ fontSize: "24px", fontWeight: "1100", color: "#0F3460", display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
             #{pedido.numeroPedido}
             <div
               style={{
@@ -767,33 +905,19 @@ export const PedidoCard = ({ isMobile, pedido, formatHora, abrirDetalhes, enviar
           </div>
         </div>
 
+        {/* Botões com ícones (detalhes + whatsapp) */}
         <div style={{ display: "flex", gap: "8px" }}>
-          <button onClick={() => abrirDetalhes(pedido)} style={{ ...iconBtnStyle("#E2E8F0", "#0F3460") }} title="Ver detalhes">
+          <button onClick={() => abrirDetalhes(pedido)} style={iconBtnStyle("#E2E8F0", "#0F3460")} title="Detalhes">
             <Eye size={18} />
           </button>
 
-          <button
-            onClick={() => enviarMensagemWhatsApp(pedido)}
-            style={{
-              width: 36,
-              height: 36,
-              borderRadius: 10,
-              border: "1px solid #25D366",
-              background: "white",
-              color: "#25D366",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center"
-            }}
-            title="WhatsApp"
-          >
+          <button onClick={() => enviarMensagemWhatsApp(pedido)} style={iconBtnStyle("#25D366", "#25D366")} title="WhatsApp">
             <MessageCircle size={18} />
           </button>
         </div>
       </div>
 
-      {/* Cliente (compacto) */}
+      {/* Cliente */}
       <div
         style={{
           background: "linear-gradient(135deg, #F8FAFC 0%, #F1F5F9 100%)",
@@ -848,6 +972,88 @@ export const PedidoCard = ({ isMobile, pedido, formatHora, abrirDetalhes, enviar
         </div>
       </div>
 
+      {/* ✅ Itens do pedido (preview) */}
+      <div
+        style={{
+          background: "white",
+          border: "1px solid #E2E8F0",
+          borderRadius: 12,
+          padding: 14,
+          marginBottom: 16
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 1000, color: "#0F3460" }}>
+            <Package size={16} /> Itens ({itensPreview.totalItens})
+          </div>
+          <button
+            onClick={() => abrirDetalhes(pedido)}
+            style={{
+              border: "1px solid #E2E8F0",
+              background: "#F8FAFC",
+              color: "#0F3460",
+              padding: "8px 10px",
+              borderRadius: 10,
+              cursor: "pointer",
+              fontWeight: 900,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              fontSize: 12
+            }}
+            title="Abrir detalhes completos"
+          >
+            <Eye size={14} /> Ver completo
+          </button>
+        </div>
+
+        {itensPreview.top.length === 0 ? (
+          <div style={{ color: "#64748B", fontSize: 13 }}>Sem itens.</div>
+        ) : (
+          <div style={{ display: "grid", gap: 8 }}>
+            {itensPreview.top.map((it, idx) => (
+              <div
+                key={idx}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: 10,
+                  padding: "10px 12px",
+                  borderRadius: 12,
+                  border: "1px solid #E2E8F0",
+                  background: "#F8FAFC"
+                }}
+              >
+                <div style={{ fontSize: 13, fontWeight: 900, color: "#0F3460" }}>
+                  {(toNumber(it.quantidade) || 1)}x {it.nome}
+                  {it.adicionaisTexto ? (
+                    <div style={{ fontSize: 12, color: "#64748B", fontWeight: 700, marginTop: 4 }}>
+                      + {it.adicionaisTexto}
+                    </div>
+                  ) : null}
+                </div>
+                <div style={{ fontSize: 13, fontWeight: 1000, color: "#0F3460", whiteSpace: "nowrap" }}>
+                  {formatMoneyBR(toNumber(it.precoTotal) || (toNumber(it.preco) * (toNumber(it.quantidade) || 1)))}
+                </div>
+              </div>
+            ))}
+
+            {itensPreview.resto > 0 && (
+              <div style={{ fontSize: 12, color: "#64748B", fontWeight: 900 }}>
+                + {itensPreview.resto} item(ns)
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Observações */}
+        {pedido.observacoes ? (
+          <div style={{ marginTop: 12, padding: 12, borderRadius: 12, border: "1px solid #FDE68A", background: "#FFFBEB", color: "#92400E", fontWeight: 900, fontSize: 13 }}>
+            <strong>Observações:</strong> {pedido.observacoes}
+          </div>
+        ) : null}
+      </div>
+
       {/* Resumo */}
       <div
         style={{
@@ -875,7 +1081,6 @@ export const PedidoCard = ({ isMobile, pedido, formatHora, abrirDetalhes, enviar
           <span>{formatMoneyBR(pedido.pagamento?.taxaEntrega)}</span>
         </div>
 
-        {/* ✅ Troco (somente se dinheiro) */}
         {trocoInfo && (
           <>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, color: "#065F46", marginBottom: 6, fontWeight: 900 }}>
@@ -888,7 +1093,7 @@ export const PedidoCard = ({ isMobile, pedido, formatHora, abrirDetalhes, enviar
           </>
         )}
 
-        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 18, fontWeight: 1000, color: "#065F46", marginTop: 8, paddingTop: 8, borderTop: "2px solid #A7F3D0" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 18, fontWeight: 1100, color: "#065F46", marginTop: 8, paddingTop: 8, borderTop: "2px solid #A7F3D0" }}>
           <span>TOTAL</span>
           <span>{formatMoneyBR(pedido.pagamento?.total)}</span>
         </div>
@@ -1006,7 +1211,7 @@ export const PedidoDetalhes = ({ isMobile, pedido, formatHora, enviarMensagemWha
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12, marginBottom: 12 }}>
         <div style={{ padding: 14, borderRadius: 12, border: "1px solid #E2E8F0", background: "#F8FAFC" }}>
           <div style={{ fontSize: 12, fontWeight: 900, color: "#64748B" }}>CLIENTE</div>
-          <div style={{ fontSize: 15, fontWeight: 1000, color: "#0F3460", marginTop: 4 }}>{pedido.cliente?.nomeCompleto || "Cliente"}</div>
+          <div style={{ fontSize: 15, fontWeight: 1100, color: "#0F3460", marginTop: 4 }}>{pedido.cliente?.nomeCompleto || "Cliente"}</div>
           <div style={{ fontSize: 13, color: "#475569", marginTop: 6, display: "flex", gap: 8, alignItems: "center" }}>
             <Phone size={14} /> {pedido.cliente?.telefone || "-"}
           </div>
@@ -1075,7 +1280,7 @@ export const PedidoDetalhes = ({ isMobile, pedido, formatHora, enviarMensagemWha
                 }}
               >
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 1000, color: "#0F3460", fontSize: 14 }}>
+                  <div style={{ fontWeight: 1100, color: "#0F3460", fontSize: 14 }}>
                     {qtd}x {item.nome}
                   </div>
                   <div style={{ fontSize: 12, color: "#334155", marginTop: 6 }}>{formatMoneyBR(base)} lanche</div>
@@ -1084,11 +1289,17 @@ export const PedidoDetalhes = ({ isMobile, pedido, formatHora, enviarMensagemWha
                   <div style={{ fontSize: 12, color: "#10B981", marginTop: 6, fontWeight: 900 }}>Unit final: {formatMoneyBR(unitFinal)}</div>
                 </div>
 
-                <div style={{ fontWeight: 1000, color: "#0F3460", whiteSpace: "nowrap" }}>{formatMoneyBR(totalItem)}</div>
+                <div style={{ fontWeight: 1100, color: "#0F3460", whiteSpace: "nowrap" }}>{formatMoneyBR(totalItem)}</div>
               </div>
             );
           })
         )}
+
+        {pedido.observacoes ? (
+          <div style={{ marginTop: 10, padding: 12, borderRadius: 12, border: "1px solid #FDE68A", background: "#FFFBEB", color: "#92400E", fontWeight: 900 }}>
+            <strong>Observações:</strong> {pedido.observacoes}
+          </div>
+        ) : null}
 
         <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid #E2E8F0", display: "grid", gap: 8 }}>
           <div style={{ display: "flex", justifyContent: "space-between", color: "#64748B", fontWeight: 800 }}>
@@ -1100,10 +1311,9 @@ export const PedidoDetalhes = ({ isMobile, pedido, formatHora, enviarMensagemWha
             <span>{formatMoneyBR(pedido.pagamento?.taxaEntrega)}</span>
           </div>
 
-          {/* ✅ Troco (somente se dinheiro) */}
           {trocoInfo && (
             <>
-              <div style={{ display: "flex", justifyContent: "space-between", color: "#065F46", fontWeight: 1000 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", color: "#065F46", fontWeight: 1100 }}>
                 <span>Troco para</span>
                 <span>{formatMoneyBR(trocoInfo.trocoPara)}</span>
               </div>
@@ -1114,7 +1324,7 @@ export const PedidoDetalhes = ({ isMobile, pedido, formatHora, enviarMensagemWha
             </>
           )}
 
-          <div style={{ display: "flex", justifyContent: "space-between", color: "#065F46", fontWeight: 1000, fontSize: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", color: "#065F46", fontWeight: 1100, fontSize: 16 }}>
             <span>TOTAL</span>
             <span>{formatMoneyBR(pedido.pagamento?.total)}</span>
           </div>
@@ -1130,7 +1340,7 @@ export const PedidoDetalhes = ({ isMobile, pedido, formatHora, enviarMensagemWha
               background: "white",
               color: "#25D366",
               cursor: "pointer",
-              fontWeight: 1000,
+              fontWeight: 1100,
               display: "flex",
               alignItems: "center",
               gap: 8
@@ -1149,7 +1359,7 @@ export const PedidoDetalhes = ({ isMobile, pedido, formatHora, enviarMensagemWha
               background: "#F8FAFC",
               color: "#0F3460",
               cursor: "pointer",
-              fontWeight: 1000,
+              fontWeight: 1100,
               display: "flex",
               alignItems: "center",
               gap: 8
